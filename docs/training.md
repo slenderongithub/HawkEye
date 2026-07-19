@@ -8,6 +8,11 @@ classifier and the weapon detector and plug them in.
 You do **not** need to touch the app code to improve accuracy — you train a
 model, drop the weights file in, and point the config at it.
 
+> **Note:** you may notice a new `hawkeye/attendance/` module and an Attendance
+> tab on the dashboard if you pull recent changes — that's an unrelated Phase 1
+> feature (face-recognition attendance logging, reusing the same InsightFace
+> identity DB) and needs no training. Nothing in this guide is affected by it.
+
 This guide covers everything **from a fresh machine to a trained model plugged
 in** — Section 0 is git/setup, Sections 1+ are the actual training.
 
