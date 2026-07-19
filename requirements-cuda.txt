@@ -1,0 +1,32 @@
+# HawkEye — deps for the RTX 3050 laptop (NVIDIA CUDA, 4 GB VRAM)
+# This is the "GPU station" for training runs and optional local-VLM inference.
+#
+# 1) Install a CUDA build of PyTorch FIRST (pick the CUDA version you have):
+#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 2) Then:
+#      pip install -r requirements-cuda.txt
+
+numpy>=1.26,<2.2
+opencv-python>=4.9
+pyyaml>=6.0
+pydantic>=2.6
+
+ultralytics>=8.3.0
+# torch / torchvision installed separately with the CUDA index-url (see above)
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+
+# GPU face recognition
+insightface>=0.7.3
+onnxruntime-gpu>=1.17
+
+# cloud reasoning (optional)
+anthropic>=0.40
+
+# --- local VLM (optional offline Stage B) : Moondream2 fits 4 GB VRAM ---
+# transformers>=4.44
+# accelerate>=0.30
+# einops
+# pillow

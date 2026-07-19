@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HawkEye — Live</title>
+<style>
+  :root{
+    --bg:#0d1017; --panel:#151a24; --panel2:#1b2230; --line:#242c3a;
+    --txt:#e6e9ef; --muted:#8b93a7; --accent:#3ea6ff; --cyan:#37d3d3;
+    --red:#ff4d5e; --amber:#ffb020; --green:#37d67a; --purple:#a074ff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);overflow:hidden;
+    display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:16px;padding:12px 18px;flex-wrap:wrap;
+    background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
+  .logo{font-weight:800;font-size:20px;letter-spacing:.5px}
+  .logo span{color:var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .chip{font-size:12px;padding:4px 10px;border-radius:20px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .chip b{color:var(--txt);font-weight:600}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;
+    background:var(--muted);vertical-align:middle}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  main{display:grid;grid-template-columns:1fr 420px;grid-template-rows:1fr;gap:14px;padding:14px;
+    flex:1;min-height:0;overflow:hidden}
+  .feed{position:relative;background:#000;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+  .feed img{width:100%;height:100%;object-fit:contain}
+  .live{position:absolute;top:12px;left:12px;background:rgba(255,77,94,.15);
+    border:1px solid var(--red);color:var(--red);font-size:12px;font-weight:700;
+    padding:4px 10px;border-radius:6px}
+  .live .dot{background:var(--red);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .side{display:flex;flex-direction:column;gap:12px;min-height:0;height:100%}
+  .tabs{display:flex;gap:6px}
+  .tab{flex:1;text-align:center;padding:8px;border-radius:8px;background:var(--panel);
+    border:1px solid var(--line);cursor:pointer;font-size:13px;color:var(--muted)}
+  .tab.active{background:var(--panel2);color:var(--txt);border-color:var(--accent)}
+  .scroll{overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding-right:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card .top{display:flex;gap:10px;padding:10px}
+  .card img.thumb{width:110px;height:74px;object-fit:cover;border-radius:6px;background:#000}
+  .card .meta{flex:1;min-width:0}
+  .headline{font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px}
+  .desc{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .badges{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .b{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase}
+  .sev-low{background:rgba(55,214,122,.15);color:var(--green)}
+  .sev-medium{background:rgba(255,176,32,.15);color:var(--amber)}
+  .sev-high{background:rgba(255,77,94,.15);color:var(--red)}
+  .sev-critical{background:var(--red);color:#fff}
+  .act{background:rgba(62,166,255,.14);color:var(--accent)}
+  .act.dispatched{background:rgba(255,77,94,.16);color:var(--red)}
+  .who{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--line);
+    font-size:12.5px;background:var(--panel2)}
+  .who img{width:34px;height:34px;border-radius:50%;object-fit:cover;background:#000}
+  .who .known{color:var(--green);font-weight:700}
+  .who .unknown{color:var(--amber);font-weight:700}
+  .time{font-size:11px;color:var(--muted);margin-left:auto}
+  .empty{color:var(--muted);text-align:center;padding:40px 10px;font-size:13px}
+  form.enroll{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;
+    display:flex;flex-direction:column;gap:8px}
+  form.enroll input{background:var(--bg);border:1px solid var(--line);color:var(--txt);
+    padding:8px;border-radius:6px;font-size:13px}
+  form.enroll button{background:var(--accent);color:#04121f;border:0;padding:9px;border-radius:6px;
+    font-weight:700;cursor:pointer}
+  .person{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:10px}
+  .person .n{font-weight:600;font-size:13px}
+  .person .m{font-size:11px;color:var(--muted)}
+  .person button{margin-left:auto;background:transparent;border:1px solid var(--line);
+    color:var(--red);border-radius:6px;padding:5px 8px;cursor:pointer;font-size:11px}
+  h4{margin:4px 2px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Hawk<span>Eye</span></div>
+  <div class="chips" id="chips">
+    <span class="chip"><span class="dot" id="d-run"></span><b id="c-run">connecting…</b></span>
+    <span class="chip">FPS <b id="c-fps">–</b></span>
+    <span class="chip">Reasoner <b id="c-reasoner">–</b></span>
+    <span class="chip">Identity <b id="c-id">–</b></span>
+    <span class="chip">Enrolled <b id="c-enrolled">–</b></span>
+  </div>
+</header>
+<main>
+  <div class="feed">
+    <img id="video" alt="live feed" />
+    <div class="live"><span class="dot"></span>LIVE</div>
+  </div>
+  <div class="side">
+    <div class="tabs">
+      <div class="tab active" data-tab="incidents" onclick="showTab('incidents')">Incidents</div>
+      <div class="tab" data-tab="people" onclick="showTab('people')">People</div>
+    </div>
+    <div class="scroll" id="pane-incidents"><div class="empty">No incidents yet. The feed is being monitored…</div></div>
+    <div class="scroll" id="pane-people" style="display:none"></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let currentTab = 'incidents';
+function showTab(t){
+  currentTab=t;
+  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
+  $('pane-incidents').style.display = t==='incidents'?'flex':'none';
+  $('pane-people').style.display = t==='people'?'flex':'none';
+  if(t==='people') loadPeople();
+}
+
+// ---- WebSocket: binary = frame, text = json event ----
+let lastUrl=null;
+function connect(){
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType='arraybuffer';
+  ws.onmessage = ev=>{
+    if(ev.data instanceof ArrayBuffer){
+      const blob=new Blob([ev.data],{type:'image/jpeg'});
+      const url=URL.createObjectURL(blob);
+      $('video').src=url;
+      if(lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl=url;
+    } else {
+      const msg=JSON.parse(ev.data);
+      if(msg.type==='status') updateStatus(msg.data);
+      else if(msg.type==='incident') addIncident(msg.data);
+    }
+  };
+  ws.onclose=()=>{ $('c-run').textContent='reconnecting…'; $('d-run').classList.remove('on'); setTimeout(connect,1500); };
+}
+
+function updateStatus(s){
+  $('d-run').classList.toggle('on', !!s.running);
+  $('c-run').textContent = s.running?'Monitoring':'Stopped';
+  $('c-fps').textContent = s.fps ?? '–';
+  $('c-reasoner').textContent = s.reasoner ?? '–';
+  $('c-id').textContent = s.identity? 'on':'off';
+  $('c-enrolled').textContent = s.enrolled ?? '–';
+}
+
+let firstIncident=true;
+function addIncident(d){
+  if(firstIncident){ $('pane-incidents').innerHTML=''; firstIncident=false; }
+  $('pane-incidents').insertAdjacentHTML('afterbegin', incidentCard(d));
+}
+function ev(p){ return p? `/api/evidence/${p}` : ''; }
+function incidentCard(d){
+  const sev=(d.reasoning?.severity)||'low';
+  const act=d.action||{}; const fm=d.face_match||{};
+  const t=new Date((d.ts||0)*1000).toLocaleTimeString();
+  let who='';
+  if(fm.matched) who=`<div class="who"><img src="${ev(fm.face_image)}"/><span class="known">✓ ${fm.name}</span><span style="color:var(--muted)">match ${(fm.similarity*100||0).toFixed(0)}%</span></div>`;
+  else if(fm.attempted) who=`<div class="who">${fm.face_image?`<img src="${ev(fm.face_image)}"/>`:''}<span class="unknown">⚠ Unidentified</span><span style="color:var(--muted)">face saved</span></div>`;
+  const dispatched = act.dispatched;
+  return `<div class="card">
+    <div class="top">
+      ${d.thumb?`<img class="thumb" src="${ev(d.thumb)}"/>`:''}
+      <div class="meta">
+        <div class="headline">${d.headline||d.anomaly_type}<span class="time">${t}</span></div>
+        <div class="desc">${(d.reasoning?.description)||''}</div>
+        <div class="badges">
+          <span class="b sev-${sev}">${sev}</span>
+          <span class="b act ${dispatched?'dispatched':''}">${dispatched?'DISPATCH: ':''}${act.action||'none'}</span>
+        </div>
+      </div>
+    </div>${who}</div>`;
+}
+
+// ---- People ----
+async function loadPeople(){
+  const pane=$('pane-people');
+  const people = await (await fetch('/api/people')).json();
+  let html = `<form class="enroll" onsubmit="return enroll(event)">
+    <h4>Enroll a person</h4>
+    <input name="name" placeholder="Full name" required />
+    <input name="role" placeholder="Role / ID (optional)" />
+    <input type="file" name="files" accept="image/*" multiple required />
+    <button type="submit">Add to local identity DB</button>
+  </form>`;
+  html += `<h4>Enrolled (${people.length})</h4>`;
+  if(!people.length) html += `<div class="empty">No one enrolled yet.</div>`;
+  for(const p of people){
+    const m = Object.entries(p.meta||{}).map(([k,v])=>`${k}: ${v}`).join(' · ');
+    html += `<div class="person"><div><div class="n">${p.name}</div><div class="m">${m||('faces: '+p.num_faces)}</div></div>
+      <button onclick="delPerson('${p.id}')">remove</button></div>`;
+  }
+  pane.innerHTML=html;
+}
+async function enroll(e){
+  e.preventDefault();
+  const f=e.target; const fd=new FormData();
+  fd.append('name', f.name.value);
+  const meta={}; if(f.role.value) meta.role=f.role.value;
+  fd.append('meta', JSON.stringify(meta));
+  for(const file of f.files.files) fd.append('files', file);
+  const btn=f.querySelector('button'); btn.textContent='Enrolling…'; btn.disabled=true;
+  const r=await fetch('/api/people',{method:'POST',body:fd});
+  if(!r.ok){ alert('Enroll failed: '+(await r.text())); }
+  btn.disabled=false; btn.textContent='Add to local identity DB';
+  loadPeople();
+  return false;
+}
+async function delPerson(id){
+  if(!confirm('Remove this person?')) return;
+  await fetch('/api/people/'+id,{method:'DELETE'}); loadPeople();
+}
+
+// initial load of historical incidents, then live
+fetch('/api/incidents').then(r=>r.json()).then(list=>{
+  if(list.length){ firstIncident=false; $('pane-incidents').innerHTML=''; list.forEach(d=>$('pane-incidents').insertAdjacentHTML('beforeend', incidentCard(d))); }
+});
+connect();
+</script>
+</body>
+</html>

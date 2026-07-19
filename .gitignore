@@ -1,0 +1,38 @@
+# HawkEye .gitignore
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# --- HawkEye runtime data (big / private — never commit) ---
+data/datasets/
+data/evidence/
+data/*.db
+data/faces/
+models/*.pt
+models/*.onnx
+models/*.engine
+models/weights/
+*.mp4
+*.avi
+
+# --- Secrets ---
+.env
+*.key
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Notebooks ---
+.ipynb_checkpoints/

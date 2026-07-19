@@ -1,0 +1,63 @@
+# HawkEye — default configuration
+# Everything the pipeline needs. Override with --config <file> or env HAWKEYE_CONFIG.
+name: HawkEye
+
+ingest:
+  source: "0"          # "0"=default webcam, a path to a video file, or an IP-cam URL (http://phone-ip:8080/video)
+  width: 960
+  height: 540
+  target_fps: 20       # cap processing FPS to keep the 8 GB Mac happy
+
+detect:
+  device: "auto"       # auto -> mps on Mac, cuda on the 3050, else cpu
+  pose_model: "yolo11n-pose.pt"    # auto-downloaded by ultralytics on first run
+  weapon_model: ""     # optional fine-tuned YOLO for guns/knives; empty = disabled
+  person_conf: 0.35
+  trigger_threshold: 0.55          # fused anomaly score above which Stage B fires
+  motion_weight: 0.35              # how much scene-motion contributes to the fused score
+  clip_seconds: 3.0                # length of evidence/reasoning clip buffer
+  cooldown_seconds: 8.0            # min gap between triggers for the same anomaly type
+
+reason:
+  backend: "auto"      # auto | claude | moondream | mock  (auto: claude if key else mock)
+  # Cost note: Stage B fires only on triggers. claude-opus-4-8 gives the best
+  # explanations (the USP). For a very high-frequency / cost-sensitive deployment,
+  # claude-sonnet-5 ($3/$15) or claude-haiku-4-5 ($1/$5) are cheaper alternatives.
+  claude_model: "claude-opus-4-8"
+  api_key_env: "ANTHROPIC_API_KEY"
+  max_frames: 6        # frames sampled from the clip and sent to the VLM
+  moondream_model: "vikhyatk/moondream2"
+
+identity:
+  enabled: true
+  match_threshold: 0.42            # cosine similarity above which a face is "known"
+  model_name: "buffalo_l"          # InsightFace pack: RetinaFace + ArcFace (512-d)
+  det_size: 640
+
+decision:
+  confidence_min: 0.5              # ignore incidents below this reasoning confidence
+  cooldown_seconds: 20.0           # per action-type dispatch cooldown
+  # (anomaly_type -> action). Types come from Stage A / Stage B.
+  rules:
+    violence: police
+    robbery: police
+    theft: police
+    weapon: police
+    intrusion: police
+    fall: ambulance
+    medical: ambulance
+    accident: ambulance
+    fire: fire
+    unknown: none
+  # severity floor required to actually dispatch (below -> log only)
+  dispatch_min_severity: "medium"  # low | medium | high | critical
+  dispatchers: ["log"]             # log | webhook  (webhook needs decision.webhook_url)
+  webhook_url: ""
+
+storage:
+  db_path: "data/hawkeye.db"
+  evidence_dir: "data/evidence"
+
+server:
+  host: "127.0.0.1"
+  port: 8000

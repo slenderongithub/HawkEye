@@ -1,0 +1,31 @@
+# HawkEye — dev/runtime deps for macOS (CPU / Apple-Silicon MPS)
+# Install:  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+#
+# NOTE on graceful degradation: the core pipeline runs even if the OPTIONAL
+# groups below fail to install — identity disables itself, and Stage B falls
+# back to the mock reasoner. Only the "core" + "detection" groups are required.
+
+# --- core (required) ---
+numpy>=1.26,<2.2
+opencv-python>=4.9
+pyyaml>=6.0
+pydantic>=2.6
+
+# --- detection (required) : YOLO11 pose/detect ---
+ultralytics>=8.3.0
+torch>=2.3        # 2.3+ has NumPy 2.x-compatible wheels (2.2.0 doesn't, causes ABI warnings)
+torchvision>=0.18
+
+# --- server (required) : dashboard + API ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+
+# --- identity (optional but recommended) : RetinaFace + ArcFace ---
+# If install fails on macOS, the identity module disables itself with a warning.
+insightface>=0.7.3
+onnxruntime>=1.17
+
+# --- cloud reasoning (optional) : Claude vision for Stage B ---
+# Needed only for the 'claude' reasoner backend. Set ANTHROPIC_API_KEY to use.
+anthropic>=0.40
