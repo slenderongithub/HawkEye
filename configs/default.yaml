@@ -39,6 +39,8 @@ identity:
   match_threshold: 0.42            # cosine similarity above which a face is "known"
   model_name: "buffalo_l"          # InsightFace pack: RetinaFace + ArcFace (512-d)
   det_size: 640
+  attendance_enabled: true         # continuously log enrolled members seen on camera
+  attendance_interval_sec: 3.0     # scan cadence (seconds) — cheap, runs off the hot path
 
 decision:
   confidence_min: 0.5              # ignore incidents below this reasoning confidence

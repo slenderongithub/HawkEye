@@ -28,7 +28,7 @@
   .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
   main{display:grid;grid-template-columns:1fr 420px;grid-template-rows:1fr;gap:14px;padding:14px;
     flex:1;min-height:0;overflow:hidden}
-  .feed{position:relative;background:#000;border-radius:12px;overflow:hidden;
+  .feed{position:relative;background:#000;border-radius:12px;overflow:hidden;min-width:0;min-height:0;
     border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
   .feed img{width:100%;height:100%;object-fit:contain}
   .live{position:absolute;top:12px;left:12px;background:rgba(255,77,94,.15);
@@ -42,6 +42,9 @@
     border:1px solid var(--line);cursor:pointer;font-size:13px;color:var(--muted)}
   .tab.active{background:var(--panel2);color:var(--txt);border-color:var(--accent)}
   .scroll{overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding-right:4px}
+  /* children must NOT flex-shrink, else they compress to fit instead of
+     overflowing — which is why the list "collapsed into itself" with no scrollbar */
+  .scroll>*{flex-shrink:0}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .card .top{display:flex;gap:10px;padding:10px}
   .card img.thumb{width:110px;height:74px;object-fit:cover;border-radius:6px;background:#000}
@@ -77,6 +80,10 @@
     color:var(--red);border-radius:6px;padding:5px 8px;cursor:pointer;font-size:11px}
   h4{margin:4px 2px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
   ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+  #toasts{position:fixed;bottom:18px;right:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+  .toast{background:var(--panel2);border:1px solid var(--green);color:var(--green);
+    padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;
+    box-shadow:0 6px 20px rgba(0,0,0,.4);transition:opacity .4s}
 </style>
 </head>
 <body>
@@ -88,8 +95,10 @@
     <span class="chip">Reasoner <b id="c-reasoner">–</b></span>
     <span class="chip">Identity <b id="c-id">–</b></span>
     <span class="chip">Enrolled <b id="c-enrolled">–</b></span>
+    <span class="chip">Present <b id="c-present">–</b></span>
   </div>
 </header>
+<div id="toasts"></div>
 <main>
   <div class="feed">
     <img id="video" alt="live feed" />
@@ -98,9 +107,11 @@
   <div class="side">
     <div class="tabs">
       <div class="tab active" data-tab="incidents" onclick="showTab('incidents')">Incidents</div>
+      <div class="tab" data-tab="attendance" onclick="showTab('attendance')">Attendance</div>
       <div class="tab" data-tab="people" onclick="showTab('people')">People</div>
     </div>
     <div class="scroll" id="pane-incidents"><div class="empty">No incidents yet. The feed is being monitored…</div></div>
+    <div class="scroll" id="pane-attendance" style="display:none"></div>
     <div class="scroll" id="pane-people" style="display:none"></div>
   </div>
 </main>
@@ -111,8 +122,10 @@ function showTab(t){
   currentTab=t;
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
   $('pane-incidents').style.display = t==='incidents'?'flex':'none';
+  $('pane-attendance').style.display = t==='attendance'?'flex':'none';
   $('pane-people').style.display = t==='people'?'flex':'none';
   if(t==='people') loadPeople();
+  if(t==='attendance') loadAttendance();
 }
 
 // ---- WebSocket: binary = frame, text = json event ----
@@ -131,6 +144,7 @@ function connect(){
       const msg=JSON.parse(ev.data);
       if(msg.type==='status') updateStatus(msg.data);
       else if(msg.type==='incident') addIncident(msg.data);
+      else if(msg.type==='attendance') onAttendance(msg.data);
     }
   };
   ws.onclose=()=>{ $('c-run').textContent='reconnecting…'; $('d-run').classList.remove('on'); setTimeout(connect,1500); };
@@ -143,6 +157,7 @@ function updateStatus(s){
   $('c-reasoner').textContent = s.reasoner ?? '–';
   $('c-id').textContent = s.identity? 'on':'off';
   $('c-enrolled').textContent = s.enrolled ?? '–';
+  $('c-present').textContent = s.present_today ?? '–';
 }
 
 let firstIncident=true;
@@ -211,6 +226,36 @@ async function delPerson(id){
   if(!confirm('Remove this person?')) return;
   await fetch('/api/people/'+id,{method:'DELETE'}); loadPeople();
 }
+
+// ---- Attendance ----
+async function loadAttendance(){
+  const pane=$('pane-attendance');
+  const recs = await (await fetch('/api/attendance')).json();
+  const today = new Date().toLocaleDateString();
+  let html = `<h4>Present today — ${today} (${recs.length})</h4>`;
+  if(!recs.length){ html += `<div class="empty">No enrolled members seen yet today.</div>`; }
+  for(const r of recs){
+    const first=new Date((r.first_seen||0)*1000).toLocaleTimeString();
+    const last=new Date((r.last_seen||0)*1000).toLocaleTimeString();
+    html += `<div class="person"><div>
+        <div class="n">✓ ${r.name}</div>
+        <div class="m">first seen ${first} · last ${last} · ${r.sightings} sighting${r.sightings==1?'':'s'}</div>
+      </div><span class="b" style="background:rgba(55,214,122,.15);color:var(--green)">present</span></div>`;
+  }
+  pane.innerHTML=html;
+}
+function onAttendance(rec){
+  toast(`✓ ${rec.name} marked present`);
+  if(currentTab==='attendance') loadAttendance();
+}
+function toast(text){
+  const el=document.createElement('div');
+  el.className='toast'; el.textContent=text;
+  $('toasts').appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+}
+// keep the attendance tab fresh while it's open
+setInterval(()=>{ if(currentTab==='attendance') loadAttendance(); }, 5000);
 
 // initial load of historical incidents, then live
 fetch('/api/incidents').then(r=>r.json()).then(list=>{

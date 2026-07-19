@@ -48,6 +48,8 @@ class IdentityConfig(BaseModel):
     match_threshold: float = 0.42
     model_name: str = "buffalo_l"
     det_size: int = 640
+    attendance_enabled: bool = True        # continuous face-recognition attendance
+    attendance_interval_sec: float = 3.0   # how often to scan the frame for members
 
 
 class DecisionConfig(BaseModel):

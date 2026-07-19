@@ -1,8 +1,13 @@
-# HawkEye — Explainable Anomaly Detection
+# HawkEye — Indoor Surveillance & Attendance
 
-Real-time system that watches a camera feed, **detects** anomalies (violence, falls/medical, weapons, intrusion, accidents, fire — and novel "any bad thing" events), **explains what happened in plain language**, **identifies who** by matching faces against a local database, and **decides the response** (police / ambulance / fire) — all shown on a live web dashboard.
+Real-time system that watches a camera feed and does **two jobs from one local face database**:
 
-Phase 1 (this build) runs on a **hand-moved camera**. The drone is a Phase 2 plug-in; production hardening is Phase 3. See `.claude/plans/` (or your plan file) for the full roadmap.
+1. **Surveillance** — **detects** anomalies (violence, falls/medical, weapons, intrusion, accidents, fire — and novel "any bad thing" events), **explains what happened in plain language**, **identifies who** was involved, and **decides the response** (police / ambulance / fire).
+2. **Attendance** — continuously recognizes enrolled members on camera and **logs who's present** (one record per person per day).
+
+Everything is shown on a live web dashboard. *"HawkEye doesn't just watch for danger — it knows who's in the building."*
+
+Phase 1 (this build) runs on a **hand-moved / fixed camera**. The drone (a human-piloted LiteWing + WiFi camera) is a Phase 2 plug-in; production hardening is Phase 3. See the plan file for the full roadmap.
 
 ## Why it's different (USP)
 
@@ -12,6 +17,7 @@ Phase 1 (this build) runs on a **hand-moved camera**. The drone is a Phase 2 plu
 4. **Anomaly → Identity → Action, one loop** — names *who* and decides *what to do*, not just "anomaly: yes".
 5. **Camera-agnostic** — the same pipeline runs on webcam → phone → drone (Phase 2 swaps only the video source).
 6. **Gated, auditable dispatch** — every automated action is severity/confidence-gated, cooldown-protected, and logged.
+7. **Dual utility from one face DB** — the same enrolled-member database powers both perpetrator identification *and* passive attendance logging; enroll once, get both.
 
 ## Architecture
 
@@ -22,9 +28,10 @@ camera ─▶ Stage A (real-time)          ─▶ Stage B (triggered VLM)  ─�
 
 - **Stage A** (`hawkeye/detect/`): YOLO11 pose + keypoint heuristics (fight/fall) + motion anomaly + optional weapon YOLO → fused anomaly event.
 - **Stage B** (`hawkeye/reason/`): pluggable reasoner — **Claude** (cloud, best quality) · **Moondream2** (local offline) · **mock** (no deps).
-- **Identity** (`hawkeye/identity/`): InsightFace (RetinaFace + ArcFace) + cosine match vs a local ~20-person DB.
+- **Identity** (`hawkeye/identity/`): InsightFace (RetinaFace + ArcFace) + cosine match vs a local ~20-person DB. Used both for perpetrator ID on incidents and for attendance.
+- **Attendance** (`hawkeye/attendance/`): a slow-cadence worker (off the real-time path) that recognizes all enrolled members in view and logs presence — one record per person per day.
 - **Decision** (`hawkeye/decision/`): config-driven rules + gating + cooldown + dispatchers.
-- **Server** (`server/`): FastAPI + WebSocket live feed + REST + dashboard.
+- **Server** (`server/`): FastAPI + WebSocket live feed + REST + dashboard (Incidents / Attendance / People tabs).
 
 ## Setup
 

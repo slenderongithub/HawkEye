@@ -78,6 +78,26 @@ class IdentityService:
                           person_id=person_id if matched else None,
                           name=name, similarity=round(sim, 3)), crop)
 
+    def identify_all(self, frame: np.ndarray) -> List[FaceMatch]:
+        """Match EVERY enrolled face in the frame (for attendance — a room can
+        have several members at once). Only returns confident matches. Never
+        raises. `identify()` above stays single-best for perpetrator ID."""
+        if not self.available:
+            return []
+        try:
+            faces = self.recognizer.detect(frame)
+        except Exception as e:
+            log.warning("Attendance face detection failed (%s); skipping.", e)
+            return []
+        out: List[FaceMatch] = []
+        for face in faces:
+            person_id, sim = self.store.match(face.embedding)
+            if person_id is not None and sim >= self.cfg.match_threshold:
+                p = self.store.get_person(person_id)
+                out.append(FaceMatch(attempted=True, matched=True, person_id=person_id,
+                                     name=p.name if p else None, similarity=round(sim, 3)))
+        return out
+
     def list_people(self) -> List[Person]:
         return self.store.list_people()
 

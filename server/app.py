@@ -67,6 +67,12 @@ async def incidents(limit: int = 50):
     return out
 
 
+@app.get("/api/attendance")
+async def attendance(date: str | None = None):
+    records = app.state.pipeline.attendance.on_date(date)
+    return [json.loads(r.model_dump_json()) for r in records]
+
+
 @app.get("/api/people")
 async def people():
     return [json.loads(p.model_dump_json()) for p in app.state.pipeline.identity.list_people()]
@@ -134,7 +140,8 @@ async def ws(websocket: WebSocket):
     hub = app.state.hub
     last_fid = -1
     # Replay recent incidents on connect so a fresh page isn't empty.
-    version, recent = hub.incidents_since(0)
+    version, _ = hub.incidents_since(0)
+    att_version, _ = hub.attendance_since(0)   # only toast NEW marks (no replay flood)
     for inc in hub.recent_incidents(20)[::-1]:
         await websocket.send_text(json.dumps({"type": "incident", "data": inc}))
     try:
@@ -146,6 +153,9 @@ async def ws(websocket: WebSocket):
             version, new = hub.incidents_since(version)
             for inc in new:
                 await websocket.send_text(json.dumps({"type": "incident", "data": inc}))
+            att_version, att_new = hub.attendance_since(att_version)
+            for rec in att_new:
+                await websocket.send_text(json.dumps({"type": "attendance", "data": rec}))
             await websocket.send_text(json.dumps({"type": "status", "data": hub.get_status()}))
             await asyncio.sleep(1 / 15)
     except (WebSocketDisconnect, RuntimeError):

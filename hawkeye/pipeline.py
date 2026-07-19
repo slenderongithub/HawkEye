@@ -19,6 +19,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from .attendance import AttendanceStore
 from .config import Config
 from .decision import DecisionEngine
 from .detect import StageA
@@ -48,13 +49,16 @@ class Pipeline:
         self.decision = DecisionEngine(cfg.decision)
         self.store = IncidentStore(cfg.storage.db_path)
         self.evidence = EvidenceManager(cfg.storage.evidence_dir)
+        self.attendance = AttendanceStore(cfg.storage.db_path)
 
         buflen = max(8, int(cfg.detect.clip_seconds * cfg.ingest.target_fps))
         self._ring: deque = deque(maxlen=buflen)
         self._triggers: "queue.Queue" = queue.Queue(maxsize=4)
+        self._latest_raw: Optional[np.ndarray] = None
         self._running = False
         self._capture_t: Optional[threading.Thread] = None
         self._worker_t: Optional[threading.Thread] = None
+        self._attendance_t: Optional[threading.Thread] = None
         self._fps = 0.0
 
     # --- lifecycle ---
@@ -70,13 +74,19 @@ class Pipeline:
         self.hub.set_status(running=True, reasoner=self.reasoner.name,
                             identity=self.identity.available,
                             source=self.cfg.ingest.source,
-                            enrolled=self.identity.enrolled)
+                            enrolled=self.identity.enrolled,
+                            attendance=self.cfg.identity.attendance_enabled,
+                            present_today=self.attendance.present_count())
         self._worker_t = threading.Thread(target=self._worker_loop, daemon=True)
         self._capture_t = threading.Thread(target=self._capture_loop, daemon=True)
         self._worker_t.start()
         self._capture_t.start()
-        log.info("Pipeline started (reasoner=%s, identity=%s)",
-                 self.reasoner.name, self.identity.available)
+        if self.cfg.identity.attendance_enabled:
+            self._attendance_t = threading.Thread(target=self._attendance_loop, daemon=True)
+            self._attendance_t.start()
+        log.info("Pipeline started (reasoner=%s, identity=%s, attendance=%s)",
+                 self.reasoner.name, self.identity.available,
+                 self.cfg.identity.attendance_enabled)
 
     def stop(self) -> None:
         self._running = False
@@ -119,6 +129,7 @@ class Pipeline:
                     log.info("End of stream / source read failed.")
                     break
                 self._ring.append(frame.copy())
+                self._latest_raw = frame          # for the attendance worker
 
                 event, annotated, _ = self.stage_a.process(frame, frame_id, t0)
                 ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -190,6 +201,34 @@ class Pipeline:
         self.hub.push_incident(payload)
         log.warning("INCIDENT %s: %s [%s] -> %s", incident.id, incident.headline(),
                     reasoning.severity.value, action.action.value)
+
+    # --- attendance (slow cadence, off the hot path) ---
+    def _attendance_loop(self) -> None:
+        """Continuously (every attendance_interval_sec) match enrolled members in
+        view and log presence. Independent of anomaly triggers. Reuses the
+        recognizer (thread-safe via its internal inference lock)."""
+        interval = max(0.5, self.cfg.identity.attendance_interval_sec)
+        while self._running:
+            time.sleep(interval)
+            frame = self._latest_raw
+            if frame is None or not self.identity.available:
+                continue
+            try:
+                matches = self.identity.identify_all(frame.copy())
+            except Exception as e:
+                log.debug("Attendance scan failed: %s", e)
+                continue
+            for m in matches:
+                if not (m.matched and m.person_id and m.name):
+                    continue
+                newly = self.attendance.mark_seen(m.person_id, m.name)
+                if newly:
+                    log.info("ATTENDANCE: %s marked present", m.name)
+                    self.hub.push_attendance({
+                        "person_id": m.person_id, "name": m.name,
+                        "ts": time.time(), "similarity": m.similarity,
+                    })
+            self.hub.set_status(present_today=self.attendance.present_count())
 
     @staticmethod
     def _detect_gpu(device: str) -> bool:

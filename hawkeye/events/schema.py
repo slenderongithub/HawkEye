@@ -147,3 +147,13 @@ class Person(BaseModel):
     meta: Dict[str, str] = Field(default_factory=dict)   # e.g. {"role": "staff", "id_no": "..."}
     enrolled_at: float = Field(default_factory=_now)
     num_faces: int = 0
+
+
+class AttendanceRecord(BaseModel):
+    """One enrolled member's presence on a given day (one row per person/day)."""
+    person_id: str
+    name: str
+    date: str                       # "YYYY-MM-DD" (local)
+    first_seen: float               # epoch ts of first sighting that day
+    last_seen: float                # epoch ts of most recent sighting
+    sightings: int = 1              # how many times the attendance worker saw them

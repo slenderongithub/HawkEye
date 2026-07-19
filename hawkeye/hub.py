@@ -18,6 +18,8 @@ class StreamHub:
         self._frame_id: int = 0
         self._incidents: Deque[dict] = deque(maxlen=max_incidents)
         self._incident_version: int = 0
+        self._attendance: Deque[dict] = deque(maxlen=max_incidents)
+        self._attendance_version: int = 0
         # lightweight runtime status for the dashboard header
         self.status: Dict[str, object] = {
             "running": False,
@@ -25,6 +27,7 @@ class StreamHub:
             "reasoner": "mock",
             "identity": False,
             "source": "",
+            "present_today": 0,
         }
 
     # --- producer side (pipeline thread) ---
@@ -37,6 +40,11 @@ class StreamHub:
         with self._lock:
             self._incidents.appendleft(incident)
             self._incident_version += 1
+
+    def push_attendance(self, record: dict) -> None:
+        with self._lock:
+            self._attendance.appendleft(record)
+            self._attendance_version += 1
 
     def set_status(self, **kwargs) -> None:
         with self._lock:
@@ -60,6 +68,15 @@ class StreamHub:
     def recent_incidents(self, limit: int = 50) -> List[dict]:
         with self._lock:
             return list(self._incidents)[:limit]
+
+    def attendance_since(self, version: int) -> Tuple[int, List[dict]]:
+        """Return (current_version, newly-present records since `version`)."""
+        with self._lock:
+            if version >= self._attendance_version:
+                return self._attendance_version, []
+            n_new = self._attendance_version - version
+            new = list(self._attendance)[:n_new][::-1]
+            return self._attendance_version, new
 
     def get_status(self) -> Dict[str, object]:
         with self._lock:
