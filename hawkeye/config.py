@@ -23,7 +23,11 @@ class IngestConfig(BaseModel):
 class DetectConfig(BaseModel):
     device: str = "auto"
     pose_model: str = "yolo11n-pose.pt"
-    weapon_model: str = ""
+    weapon_model: str = ""            # path to a trained weapon-detection YOLO
+    weapon_conf: float = 0.4
+    action_model: str = ""           # path to a trained action classifier (scripts/train_action.py)
+    action_min_conf: float = 0.5     # min softmax prob to raise an action candidate
+    action_stride: int = 2           # run the action net every N frames (perf)
     person_conf: float = 0.35
     trigger_threshold: float = 0.55
     motion_weight: float = 0.35

@@ -11,7 +11,13 @@ ingest:
 detect:
   device: "auto"       # auto -> mps on Mac, cuda on the 3050, else cpu
   pose_model: "yolo11n-pose.pt"    # auto-downloaded by ultralytics on first run
-  weapon_model: ""     # optional fine-tuned YOLO for guns/knives; empty = disabled
+  weapon_model: ""     # trained YOLO for guns/knives (see docs/training.md); empty = disabled
+  weapon_conf: 0.4
+  # Trained action classifier (violence/fall/normal) from scripts/train_action.py.
+  # When set + present, it REPLACES the zero-training heuristics. Empty = heuristics.
+  action_model: ""     # e.g. "models/action_gru.pt"
+  action_min_conf: 0.5
+  action_stride: 2
   person_conf: 0.35
   trigger_threshold: 0.55          # fused anomaly score above which Stage B fires
   motion_weight: 0.35              # how much scene-motion contributes to the fused score

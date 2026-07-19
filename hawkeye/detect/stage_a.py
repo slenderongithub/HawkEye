@@ -12,6 +12,7 @@ import numpy as np
 from ..config import DetectConfig
 from ..events.schema import AnomalyType, BBox, StageAEvent
 from . import heuristics
+from .action_classifier import ActionClassifier
 from .pose import SKELETON, PersonDetection, PoseDetector
 from .scene_anomaly import MotionAnomaly
 from .weapons import WeaponDetector
@@ -27,12 +28,19 @@ class StageA:
         self.cfg = cfg
         self.pose = PoseDetector(cfg.pose_model, cfg.device, cfg.person_conf)
         self.motion = MotionAnomaly()
-        self.weapons = WeaponDetector(cfg.weapon_model, cfg.device)
+        self.weapons = WeaponDetector(cfg.weapon_model, cfg.device, cfg.weapon_conf)
+        self.action = ActionClassifier(cfg.action_model, cfg.device,
+                                       cfg.action_min_conf, cfg.action_stride)
         self._last_trigger: Dict[str, float] = {}
 
     def load(self) -> "StageA":
         self.pose.load()
         self.weapons.load()
+        if self.action.available:
+            self.action.load()
+            log.info("Stage A action source: TRAINED model (%s)", self.cfg.action_model)
+        else:
+            log.info("Stage A action source: heuristics (no trained model configured)")
         return self
 
     # --- core ---
@@ -40,7 +48,14 @@ class StageA:
                 ) -> Tuple[StageAEvent, np.ndarray, List[PersonDetection]]:
         persons = self.pose.detect(frame)
         motion = self.motion.update(frame)
-        candidates = heuristics.analyze(persons, motion)
+        h, w = frame.shape[:2]
+
+        # Trained action classifier takes precedence over the bootstrap
+        # heuristics once weights are configured (see docs/training.md).
+        if self.action.available:
+            candidates = self.action.update(persons, motion, w, h)
+        else:
+            candidates = heuristics.analyze(persons, motion)
 
         weapon_dets = self.weapons.detect(frame)
         if weapon_dets:
