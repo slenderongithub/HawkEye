@@ -50,3 +50,8 @@ class IncidentStore:
         r = self._conn.execute(
             "SELECT data FROM incidents WHERE id=?", (incident_id,)).fetchone()
         return Incident.model_validate_json(r["data"]) if r else None
+
+    def close(self) -> None:
+        """Release the SQLite connection (call on pipeline shutdown)."""
+        with self._lock:
+            self._conn.close()

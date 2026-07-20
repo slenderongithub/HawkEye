@@ -15,7 +15,7 @@ from . import heuristics
 from .action_classifier import ActionClassifier
 from .pose import SKELETON, PersonDetection, PoseDetector
 from .scene_anomaly import MotionAnomaly
-from .weapons import WeaponDetector
+from .weapons import WEAPON_KEYWORDS, WeaponDetector
 
 log = logging.getLogger("hawkeye.detect.stage_a")
 
@@ -28,12 +28,16 @@ class StageA:
         self.cfg = cfg
         self.pose = PoseDetector(cfg.pose_model, cfg.device, cfg.person_conf)
         self.motion = MotionAnomaly()
-        self.weapons = WeaponDetector(cfg.weapon_model, cfg.device, cfg.weapon_conf)
+        self.weapons = WeaponDetector(cfg.weapon_model, cfg.device, cfg.weapon_conf,
+                                      cfg.weapon_labels or WEAPON_KEYWORDS)
         self.action = ActionClassifier(cfg.action_model, cfg.device,
                                        cfg.action_min_conf, cfg.action_stride)
         self._last_trigger: Dict[str, float] = {}
 
     def load(self) -> "StageA":
+        # Surface the resolved compute device (auto -> cuda/mps/cpu) so a
+        # "why is this slow on a GPU box" question is answerable from the logs.
+        log.info("Stage A device: %s (requested '%s')", self.pose.device, self.cfg.device)
         self.pose.load()
         self.weapons.load()
         if self.action.available:

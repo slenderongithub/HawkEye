@@ -56,6 +56,36 @@ async def status():
     return app.state.hub.get_status()
 
 
+@app.get("/api/health")
+async def health():
+    """Liveness/readiness probe: reports whether the core components actually
+    came up (Stage A weights loaded, DB + evidence dir writable). Returns 503
+    when a critical component is down so a container orchestrator can react."""
+    import os
+
+    pipeline = app.state.pipeline
+    cfg = app.state.cfg
+
+    stage_a_loaded = getattr(pipeline.stage_a.pose, "_model", None) is not None
+    evidence_dir = Path(cfg.storage.evidence_dir)
+    evidence_ok = evidence_dir.is_dir() and os.access(evidence_dir, os.W_OK)
+    db_parent = Path(cfg.storage.db_path).parent
+    db_ok = db_parent.is_dir() and os.access(db_parent, os.W_OK)
+
+    components = {
+        "running": pipeline._running,
+        "stage_a_loaded": stage_a_loaded,
+        "evidence_writable": evidence_ok,
+        "db_writable": db_ok,
+        "identity": pipeline.identity.available,
+        "reasoner": pipeline.reasoner.name,
+    }
+    # Identity/reasoner degrade gracefully by design, so they don't fail health.
+    healthy = stage_a_loaded and evidence_ok and db_ok and pipeline._running
+    body = {"status": "ok" if healthy else "degraded", "components": components}
+    return JSONResponse(body, status_code=200 if healthy else 503)
+
+
 @app.get("/api/incidents")
 async def incidents(limit: int = 50):
     items = app.state.pipeline.store.recent(limit)
@@ -129,7 +159,10 @@ async def delete_person(person_id: str):
 async def evidence(path: str):
     root = Path(app.state.cfg.storage.evidence_dir).resolve()
     target = (root / path).resolve()
-    if not str(target).startswith(str(root)) or not target.is_file():
+    # is_relative_to (vs a string startswith) correctly rejects sibling dirs
+    # like ".../evidence-other/..." and, because both paths are resolved,
+    # symlinks that escape the evidence root.
+    if not target.is_relative_to(root) or not target.is_file():
         raise HTTPException(404, "Not found")
     return FileResponse(target)
 

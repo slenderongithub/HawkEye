@@ -33,13 +33,12 @@ final per-frame vector fed to the model is FEATURE_DIM = 78.
 """
 from __future__ import annotations
 
-import math
 from typing import List, Sequence
 
 import numpy as np
 
-from .pose import (L_HIP, L_SHOULDER, L_WRIST, NOSE, R_HIP, R_SHOULDER, R_WRIST,
-                   PersonDetection)
+from . import geometry
+from .pose import L_HIP, L_SHOULDER, NOSE, R_HIP, R_SHOULDER, PersonDetection
 
 N_KP = 17
 KP_XY = N_KP * 2          # 34
@@ -61,17 +60,6 @@ def _mid(a, b):
 
 def _dominant(persons: Sequence[PersonDetection]) -> PersonDetection:
     return max(persons, key=lambda p: (p.width * p.height) * (0.5 + 0.5 * p.conf))
-
-
-def _box_iou(a: np.ndarray, b: np.ndarray) -> float:
-    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
-    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    inter = iw * ih
-    if inter <= 0:
-        return 0.0
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return float(inter / (ua + 1e-6))
 
 
 def frame_feature(persons: Sequence[PersonDetection], motion: float,
@@ -101,11 +89,9 @@ def frame_feature(persons: Sequence[PersonDetection], motion: float,
             f[2 * i + 1] = np.clip((k[1] - center[1]) / scale, -4, 4)
 
     # [34] torso verticality (0 upright .. 1 horizontal)
-    if sh is not None and hip is not None:
-        v = hip - sh
-        if np.linalg.norm(v) > 1e-3:
-            ang = abs(math.degrees(math.atan2(abs(v[0]), abs(v[1]) + 1e-6)))
-            f[34] = min(1.0, ang / 90.0)
+    horiz = geometry.torso_horizontalness(sh, hip)
+    if horiz is not None:
+        f[34] = horiz
     # [35] aspect ratio (wide => lying)
     f[35] = np.clip(p.width / (p.height + 1e-6), 0, 5)
     # [36] normalized height
@@ -117,14 +103,7 @@ def frame_feature(persons: Sequence[PersonDetection], motion: float,
     if nose is not None and hip is not None:
         f[38] = np.clip((hip[1] - nose[1]) / scale, -4, 4)
     # [39] aggressive pose: wrists at/above shoulder height
-    cues, n = 0, 0
-    for wi, si in ((L_WRIST, L_SHOULDER), (R_WRIST, R_SHOULDER)):
-        w, s = _kp(p, wi), _kp(p, si)
-        if w is not None and s is not None:
-            n += 1
-            if w[1] <= s[1] + 0.1 * p.height:
-                cues += 1
-    f[39] = (cues / n) if n else 0.0
+    f[39] = geometry.aggressive_pose(p)
 
     # [40] person count (scaled), [41] proximity, [42] IoU
     f[40] = min(len(persons), 5) / 5.0
@@ -133,10 +112,8 @@ def frame_feature(persons: Sequence[PersonDetection], motion: float,
         for i in range(len(persons)):
             for j in range(i + 1, len(persons)):
                 pi, pj = persons[i], persons[j]
-                dist = float(np.linalg.norm(pi.centroid - pj.centroid))
-                sc = (pi.height + pj.height) / 2.0 + 1e-6
-                best_prox = max(best_prox, math.exp(-dist / sc))
-                best_iou = max(best_iou, _box_iou(pi.box, pj.box))
+                best_prox = max(best_prox, geometry.proximity(pi, pj))
+                best_iou = max(best_iou, geometry.box_iou(pi.box, pj.box))
         f[41] = best_prox
         f[42] = best_iou
     return f

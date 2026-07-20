@@ -19,6 +19,20 @@ class DecisionEngine:
         self.dispatchers = build_dispatchers(cfg.dispatchers, cfg.webhook_url)
         self._min_rank = severity_rank(cfg.dispatch_min_severity)
         self._last_dispatch: Dict[str, float] = {}   # action -> ts
+        self._validate_rules()
+
+    def _validate_rules(self) -> None:
+        """Surface misconfigured decision rules at startup. A rule value that
+        isn't a valid ActionType would otherwise silently fall back to the VLM's
+        recommendation at runtime, which is easy to miss. We warn rather than
+        raise so an otherwise-usable config still boots."""
+        valid = {a.value for a in ActionType}
+        for atype, action in self.cfg.rules.items():
+            if action not in valid:
+                log.warning(
+                    "Decision rule '%s' -> '%s' is not a valid action %s; "
+                    "this rule will be ignored and the VLM recommendation used "
+                    "instead.", atype, action, sorted(valid))
 
     def _action_for(self, reasoning: Reasoning) -> ActionType:
         # Config rules are authoritative; fall back to the VLM's recommendation.

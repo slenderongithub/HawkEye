@@ -65,3 +65,8 @@ class AttendanceStore:
         r = self._conn.execute(
             "SELECT COUNT(*) AS n FROM attendance WHERE date=?", (d,)).fetchone()
         return int(r["n"]) if r else 0
+
+    def close(self) -> None:
+        """Release the SQLite connection (call on pipeline shutdown)."""
+        with self._lock:
+            self._conn.close()

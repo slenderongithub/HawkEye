@@ -95,6 +95,19 @@ class Pipeline:
         except queue.Full:
             pass
         self.hub.set_status(running=False)
+        self._close_stores()
+
+    def _close_stores(self) -> None:
+        """Release SQLite connections so repeated start/stop cycles (dev reloads,
+        tests) don't leak file descriptors. Best-effort: a late write from a
+        still-draining worker thread would just log, not crash."""
+        for store in (self.store, self.attendance, getattr(self.identity, "store", None)):
+            if store is None:
+                continue
+            try:
+                store.close()
+            except Exception as e:      # pragma: no cover - shutdown best-effort
+                log.debug("Store close failed: %s", e)
 
     def _load_identity(self) -> None:
         log.info("Loading identity model (InsightFace) in the background...")

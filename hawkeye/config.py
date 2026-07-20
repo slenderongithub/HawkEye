@@ -25,6 +25,9 @@ class DetectConfig(BaseModel):
     pose_model: str = "yolo11n-pose.pt"
     weapon_model: str = ""            # path to a trained weapon-detection YOLO
     weapon_conf: float = 0.4
+    # Class-label substrings that count as a weapon. Empty => use the built-in
+    # default list (see detect/weapons.py WEAPON_KEYWORDS).
+    weapon_labels: List[str] = Field(default_factory=list)
     action_model: str = ""           # path to a trained action classifier (scripts/train_action.py)
     action_min_conf: float = 0.5     # min softmax prob to raise an action candidate
     action_stride: int = 2           # run the action net every N frames (perf)

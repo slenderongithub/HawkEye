@@ -100,6 +100,11 @@ class EmbeddingStore:
     def count(self) -> int:
         return len(self._owner_ids)
 
+    def close(self) -> None:
+        """Release the SQLite connection (call on pipeline shutdown)."""
+        with self._lock:
+            self._conn.close()
+
     # --- internals ---
     def _refresh(self) -> None:
         rows = self._conn.execute(
