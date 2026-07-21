@@ -21,6 +21,8 @@ models/*.pt
 models/*.onnx
 models/*.engine
 models/weights/
+*.pt
+runs/
 *.mp4
 *.avi
 

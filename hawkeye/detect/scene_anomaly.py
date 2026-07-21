@@ -30,6 +30,9 @@ class MotionAnomaly:
             self._prev_gray = gray
             return 0.0
 
+        if self._prev_gray.shape != gray.shape:
+            self._prev_gray = gray
+            return 0.0
         diff = cv2.absdiff(gray, self._prev_gray)
         self._prev_gray = gray
         motion = float(diff.mean()) / 255.0        # raw motion energy

@@ -28,7 +28,7 @@ import torch.nn.functional as F
 class ArcMargin(nn.Module):
     """Additive angular margin head (ArcFace). Enlarges inter-class margins."""
 
-    def __init__(self, in_features: int, out_features: int, s: float = 30.0, m: float = 0.30):
+    def __init__(self, in_features: int, out_features: int, s: float = 30.0, m: float = 0.35):
         super().__init__()
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)
