@@ -53,39 +53,55 @@ def ensure_dirs(root: Path) -> None:
 def organize_from_local(src: Path, dst: Path) -> dict:
     """Walk a local directory of raw videos and sort them into class folders.
 
-    Expects either:
-      <src>/<class_name>/<clip>.mp4   (already structured)
-      <src>/<clip>.mp4                (flat — prompts the user for label)
+    Handles nested structures like:
+      <src>/RWF-2000/train/Fight/<clip>.mp4
+      <src>/RWF-2000/val/NonFight/<clip>.mp4
+      <src>/<class_name>/<clip>.mp4
     """
     stats = {c: 0 for c in CLASS_DIRS}
 
     if not src.exists():
         sys.exit(f"Source directory not found: {src}")
 
-    # Check if source has class subdirectories
-    subdirs = [d for d in src.iterdir() if d.is_dir()]
-    has_structure = any(
-        d.name.lower() in CLASS_DIRS or d.name.lower() in ALIASES
-        for d in subdirs
-    )
+    # Recursively find all subdirectories that match class names or aliases
+    all_dirs = [d for d in src.rglob("*") if d.is_dir()]
+    # Include src itself in case user pointed directly inside a class folder
+    all_dirs.append(src)
 
-    if has_structure:
-        for d in subdirs:
-            raw_name = d.name.lower().strip()
-            canonical = ALIASES.get(raw_name, raw_name)
-            if canonical not in CLASS_DIRS:
-                print(f"  [skip] Unknown class folder: {d.name}")
-                continue
-            clips = [f for f in d.iterdir() if f.suffix.lower() in VIDEO_EXT]
+    found_class_dirs = False
+    for d in all_dirs:
+        raw_name = d.name.lower().strip()
+        canonical = ALIASES.get(raw_name, raw_name)
+        if canonical in CLASS_DIRS:
+            found_class_dirs = True
+            clips = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in VIDEO_EXT]
+            copied_count = 0
             for clip in clips:
                 dest = dst / canonical / clip.name
+                if dest.exists() and dest.resolve() != clip.resolve():
+                    # Generate a short counter prefix if file with same name exists
+                    cnt = 1
+                    stem, ext = clip.stem, clip.suffix
+                    # Keep total filename length reasonable for Windows MAX_PATH
+                    if len(stem) > 50:
+                        stem = stem[-50:]
+                    while (dst / canonical / f"{stem}_{cnt}{ext}").exists():
+                        cnt += 1
+                    dest = dst / canonical / f"{stem}_{cnt}{ext}"
+
                 if not dest.exists():
-                    shutil.copy2(str(clip), str(dest))
-                    stats[canonical] += 1
-            print(f"  [{canonical}] copied {stats[canonical]} clips from {d.name}/")
-    else:
-        # Flat directory — copy all to a user-specified class
-        clips = [f for f in src.rglob("*") if f.suffix.lower() in VIDEO_EXT]
+                    try:
+                        shutil.copy2(str(clip), str(dest))
+                        copied_count += 1
+                        stats[canonical] += 1
+                    except Exception as err:
+                        print(f"  ⚠ Failed to copy {clip.name}: {err}")
+            if clips:
+                print(f"  [{canonical}] copied {copied_count} clips from {d.relative_to(src)}/")
+
+    if not found_class_dirs:
+        # Flat directory — prompt user for class label
+        clips = [f for f in src.rglob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXT]
         if clips:
             print(f"Found {len(clips)} videos in flat directory {src}")
             print("Which class are these?")

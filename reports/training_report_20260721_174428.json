@@ -1,0 +1,63 @@
+{
+  "timestamp": "20260721_174428",
+  "args": {
+    "data": "data/datasets/actions",
+    "epochs": 50,
+    "batch": 32,
+    "lr": 0.0008,
+    "seq_len": 48,
+    "window_stride": 8,
+    "no_margin": false,
+    "label_smoothing": 0.08
+  },
+  "training": {
+    "model_path": "models\\action_gru.pt",
+    "best_val_f1": 0.985558130013772,
+    "epochs_run": 50,
+    "train_time_sec": 508.19845509529114,
+    "device": "cuda",
+    "labels": [
+      "fall",
+      "normal",
+      "violence"
+    ],
+    "use_margin": true,
+    "total_params": 628225
+  },
+  "evaluation": {
+    "best_epoch": 44,
+    "best_macro_f1": 0.985558130013772,
+    "final_confusion_matrix": [
+      [
+        1098,
+        3,
+        46
+      ],
+      [
+        7,
+        4537,
+        2
+      ],
+      [
+        6,
+        8,
+        2237
+      ]
+    ],
+    "per_class_f1": {
+      "fall": 0.9725420726306466,
+      "normal": 0.9978007477457664,
+      "violence": 0.9863315696649029
+    },
+    "per_class_precision": {
+      "fall": 0.9882988298829883,
+      "normal": 0.9975813544415127,
+      "violence": 0.9789934354485776
+    },
+    "per_class_recall": {
+      "fall": 0.9572798605056669,
+      "normal": 0.9980202375714914,
+      "violence": 0.9937805419813416
+    }
+  }
+}

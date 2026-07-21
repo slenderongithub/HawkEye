@@ -54,16 +54,19 @@ def extract_clip(video_path: str, pose) -> list:
 
     cap = cv2.VideoCapture(video_path)
     feats = []
-    while True:
-        ok, frame = cap.read()
-        if not ok:
+    max_frames = 1000  # safety cap (~50s at 20fps)
+    n = 0
+    while n < max_frames:
+        try:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            h, w = frame.shape[:2]
+            persons = pose.detect(frame)
+            feats.append(frame_feature(persons, 0.0, w, h))
+            n += 1
+        except Exception:
             break
-        h, w = frame.shape[:2]
-        persons = pose.detect(frame)
-        # motion proxy unavailable offline per-frame here; the feature already
-        # captures inter-person + posture cues. Set motion=0 (the live path
-        # fills it in). The temporal model reads motion from keypoint velocity.
-        feats.append(frame_feature(persons, 0.0, w, h))
     cap.release()
     return feats
 
@@ -86,7 +89,7 @@ def build_dataset(root: str, seq_len: int, window_stride: int, cache: str):
 
     X, y = [], []
     for li, lab in enumerate(labels):
-        clips = [c for c in (root_p / lab).iterdir() if c.suffix.lower() in VIDEO_EXT]
+        clips = [c for c in (root_p / lab).rglob("*") if c.is_file() and c.suffix.lower() in VIDEO_EXT]
         print(f"  [{lab}] {len(clips)} clips")
         for ci, clip in enumerate(clips):
             feats = extract_clip(str(clip), pose)
@@ -100,7 +103,7 @@ def build_dataset(root: str, seq_len: int, window_stride: int, cache: str):
             else:
                 X.append(resample(build_sequence(feats), seq_len))
                 y.append(li)
-            print(f"    {lab} {ci + 1}/{len(clips)}", end="\r")
+            print(f"    {lab} {ci + 1}/{len(clips)}", end="\r", flush=True)
         print()
 
     X = np.stack(X).astype(np.float32)
@@ -131,16 +134,27 @@ def flip_sequence(seq: np.ndarray) -> np.ndarray:
 
 
 def augment(seq: np.ndarray, rng) -> np.ndarray:
+    # Temporal jitter: randomly crop 75-100% of frames, then resample back
+    if rng.random() < 0.4 and seq.shape[0] > 8:
+        crop_ratio = rng.uniform(0.75, 1.0)
+        crop_len = max(8, int(seq.shape[0] * crop_ratio))
+        start = rng.integers(0, seq.shape[0] - crop_len + 1)
+        seq = resample(seq[start:start + crop_len], seq.shape[0])
     if rng.random() < 0.5:
         seq = flip_sequence(seq)
     if rng.random() < 0.5:                                    # gaussian noise on keypoints
-        noise = rng.normal(0, 0.02, seq[:, :KP_XY].shape).astype(np.float32)
+        noise = rng.normal(0, 0.03, seq[:, :KP_XY].shape).astype(np.float32)
         seq = seq.copy(); seq[:, :KP_XY] += noise
-    if rng.random() < 0.3:                                    # random keypoint dropout
+    if rng.random() < 0.4:                                    # random keypoint dropout
         seq = seq.copy()
-        drop = rng.random(17) < 0.1
+        drop = rng.random(17) < 0.15
         for i in np.where(drop)[0]:
             seq[:, 2 * i:2 * i + 2] = 0.0
+    # Random temporal scaling of velocity features
+    if rng.random() < 0.3:
+        seq = seq.copy()
+        scale = rng.uniform(0.8, 1.2)
+        seq[:, BASE_DIM:BASE_DIM + KP_XY] *= scale
     return seq
 
 

@@ -98,7 +98,34 @@ class ActionClassifier:
         # Run inference every `infer_stride` frames; reuse the last verdict between.
         if self._i % self.infer_stride != 0:
             return self._last
-        self._last = self._infer()
+        raw = self._infer()
+        # --- False-positive guards ---
+        # These guards use scene context (person count, posture) to suppress
+        # physically impossible classifications.
+        filtered: List[Candidate] = []
+        for atype, conf, reason in raw:
+            if atype == AnomalyType("violence"):
+                # A fight requires at least 2 people visible in the frame.
+                if len(persons) < 2:
+                    continue
+            elif atype == AnomalyType("fall"):
+                # A fall requires the person to be in a near-horizontal posture
+                # or have a wide aspect ratio (lying down). If the dominant
+                # person is clearly upright, suppress the false alarm.
+                if persons:
+                    from . import geometry
+                    from .pose import L_HIP, L_SHOULDER, R_HIP, R_SHOULDER
+                    dom = max(persons, key=lambda p: p.width * p.height)
+                    sh = geometry.mid(dom.kp(L_SHOULDER), dom.kp(R_SHOULDER))
+                    hip = geometry.mid(dom.kp(L_HIP), dom.kp(R_HIP))
+                    horiz = geometry.torso_horizontalness(sh, hip)
+                    aspect = dom.width / (dom.height + 1e-6)
+                    # If torso is clearly upright AND bbox is tall (not lying),
+                    # this is not a fall.
+                    if horiz is not None and horiz < 0.35 and aspect < 0.8:
+                        continue
+            filtered.append((atype, conf, reason))
+        self._last = filtered
         return self._last
 
     def _infer(self) -> List[Candidate]:

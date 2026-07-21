@@ -54,7 +54,7 @@ def verify_dataset(root: Path) -> dict:
     for c in CLASS_DIRS:
         d = root / c
         if d.exists():
-            clips = [f for f in d.iterdir() if f.suffix.lower() in VIDEO_EXT]
+            clips = [f for f in d.rglob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXT]
             counts[c] = len(clips)
         else:
             counts[c] = 0
@@ -197,11 +197,11 @@ def train_model(args) -> dict:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\n    Model: ActionNet on {dev}")
     print(f"      Parameters: {total_params:,} total ({trainable:,} trainable)")
-    print(f"      Angular margin head: {'ON (ArcFace s=30 m=0.30)' if use_margin else 'OFF (plain softmax)'}")
+    print(f"      Angular margin head: {'ON (ArcFace s=30 m=0.35)' if use_margin else 'OFF (plain softmax)'}")
     print(f"      Optimizer: AdamW (lr={args.lr}, wd=1e-4)")
     print(f"      Scheduler: CosineAnnealingLR (T_max={args.epochs})")
     print(f"      Label smoothing: {args.label_smoothing}")
-    print(f"      Augmentation: mirror flip, gaussian noise, keypoint dropout")
+    print(f"      Augmentation: temporal jitter, mirror flip, gaussian noise, keypoint dropout, velocity scaling")
 
     # Inverse-frequency class weights
     cw = torch.tensor((counts.sum() / np.maximum(counts, 1)), dtype=torch.float32)

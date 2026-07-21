@@ -95,7 +95,7 @@ class StageA:
     def _maybe_trigger(self, atype: AnomalyType, score: float, ts: float) -> bool:
         if atype == AnomalyType.NORMAL or score < self.cfg.trigger_threshold:
             return False
-        last = self._last_trigger.get(atype.value, 0.0)
+        last = self._last_trigger.get(atype.value, -9999.0)
         if ts - last < self.cfg.cooldown_seconds:
             return False
         self._last_trigger[atype.value] = ts

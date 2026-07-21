@@ -134,23 +134,37 @@ def train(args) -> None:
     )
     elapsed = time.time() - t0
 
-    # Copy best weights to the output location
-    best_pt = Path("runs/weapon_detect/train/weights/best.pt")
+    possible_bests = [
+        Path("runs/detect/runs/weapon_detect/train/weights/best.pt"),
+        Path("runs/weapon_detect/train/weights/best.pt"),
+    ]
+    possible_lasts = [
+        Path("runs/detect/runs/weapon_detect/train/weights/last.pt"),
+        Path("runs/weapon_detect/train/weights/last.pt"),
+    ]
+
     out_p = Path(args.out)
     out_p.parent.mkdir(parents=True, exist_ok=True)
 
-    if best_pt.exists():
-        shutil.copy2(str(best_pt), str(out_p))
-        print(f"\n  ✓ Best weights copied to: {out_p}")
-    else:
-        # Fallback to last.pt
-        last_pt = Path("runs/weapon_detect/train/weights/last.pt")
-        if last_pt.exists():
-            shutil.copy2(str(last_pt), str(out_p))
-            print(f"\n  ✓ Last weights copied to: {out_p}")
-        else:
-            print("\n  ⚠ Could not find trained weights.")
-            return
+    found = False
+    for best_pt in possible_bests:
+        if best_pt.exists():
+            shutil.copy2(str(best_pt), str(out_p))
+            print(f"\n  ✓ Best weights copied to: {out_p}")
+            found = True
+            break
+
+    if not found:
+        for last_pt in possible_lasts:
+            if last_pt.exists():
+                shutil.copy2(str(last_pt), str(out_p))
+                print(f"\n  ✓ Last weights copied to: {out_p}")
+                found = True
+                break
+
+    if not found:
+        print("\n  ⚠ Could not find trained weights.")
+        return
 
     print(f"  Training time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
 
