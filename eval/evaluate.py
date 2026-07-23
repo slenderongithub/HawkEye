@@ -105,13 +105,12 @@ def test_action(data_dir: str, model_path: str, seq_len: int = 32) -> None:
     import torch
 
     from hawkeye.detect.action_model import build_model
-    from hawkeye.detect.pose import PoseDetector
-    from hawkeye.detect.skeleton_features import (BASE_DIM, FEATURE_DIM,
-                                                  build_sequence,
-                                                  frame_feature, resample)
+    from hawkeye.detect.pose import PoseDetector, resolve_device
+    from hawkeye.detect.skeleton_features import (build_sequence, frame_feature,
+                                                  resample)
 
     print(f"\n  Loading model from {model_path} ...")
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    dev = resolve_device("auto")
     ckpt = torch.load(model_path, map_location=dev, weights_only=False)
     labels = list(ckpt["labels"])
     model_seq_len = int(ckpt["seq_len"])
@@ -191,13 +190,11 @@ def compare_methods(data_dir: str, model_path: str) -> None:
     import torch
 
     from hawkeye.detect import heuristics
-    from hawkeye.detect.action_classifier import ActionClassifier, label_to_type
     from hawkeye.detect.action_model import build_model
-    from hawkeye.detect.pose import PoseDetector
+    from hawkeye.detect.pose import PoseDetector, resolve_device
     from hawkeye.detect.scene_anomaly import MotionAnomaly
-    from hawkeye.detect.skeleton_features import (FEATURE_DIM, build_sequence,
-                                                  frame_feature, resample)
-    from hawkeye.events.schema import AnomalyType
+    from hawkeye.detect.skeleton_features import (build_sequence, frame_feature,
+                                                  resample)
 
     # Map anomaly types to label indices
     type_to_label = {"violence": "violence", "fall": "fall", "normal": "normal"}
@@ -205,7 +202,7 @@ def compare_methods(data_dir: str, model_path: str) -> None:
     print(f"\n  Comparing heuristics vs trained model ({model_path})")
 
     # Load model
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    dev = resolve_device("auto")
     ckpt = torch.load(model_path, map_location=dev, weights_only=False)
     labels = list(ckpt["labels"])
     model_seq_len = int(ckpt["seq_len"])

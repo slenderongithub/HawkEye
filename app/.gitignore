@@ -1,0 +1,21 @@
+# Expo / RN
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+ios/
+android/
+*.orig.*
+
+# Metro
+.metro-health-check*
+
+# Debug
+npm-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store

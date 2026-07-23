@@ -31,6 +31,10 @@ class DetectConfig(BaseModel):
     action_model: str = ""           # path to a trained action classifier (scripts/train_action.py)
     action_min_conf: float = 0.5     # min softmax prob to raise an action candidate
     action_stride: int = 2           # run the action net every N frames (perf)
+    # Suppress a VIOLENCE verdict when 2+ people are close/overlapping but
+    # neither scene motion nor an aggressive pose backs it up (e.g. two people
+    # standing still near the camera) -- see hawkeye/detect/action_classifier.py.
+    violence_motion_min: float = 0.12
     person_conf: float = 0.35
     trigger_threshold: float = 0.55
     motion_weight: float = 0.35

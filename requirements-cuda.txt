@@ -25,6 +25,10 @@ onnxruntime-gpu>=1.17
 # cloud reasoning (optional)
 anthropic>=0.40
 
+# dataset download (training) : Kaggle API for setup_datasets.py / train_weapon.py --auto-download
+# Needs ~/.kaggle/kaggle.json on the training machine.
+kaggle>=1.6
+
 # --- local VLM (optional offline Stage B) : Moondream2 fits 4 GB VRAM ---
 # transformers>=4.44
 # accelerate>=0.30

@@ -23,6 +23,12 @@ detect:
   # When set + present, it REPLACES the zero-training heuristics. Empty = heuristics.
   action_model: "models/action_gru.pt"     # e.g. "models/action_gru.pt"
   action_min_conf: 0.80
+  # Suppress VIOLENCE when 2+ people are close/overlapping but scene motion is
+  # below this and nobody has an aggressive (wrists-raised) pose -- fixes the
+  # "two calm people standing near the camera" false-positive. Same 0-1 scale
+  # as scene motion energy; raise if still too trigger-happy, lower if real
+  # fights with little visible motion get missed.
+  violence_motion_min: 0.12
   action_stride: 2
   person_conf: 0.35
   trigger_threshold: 0.60           # fused anomaly score above which Stage B fires

@@ -233,13 +233,23 @@ def train(args) -> None:
                 s = augment(s, self.rng)
             return torch.from_numpy(np.ascontiguousarray(s)).float(), int(self.y[i])
 
-    tr_dl = DataLoader(Seq(Xtr, ytr, True), batch_size=args.batch, shuffle=True)
-    va_dl = DataLoader(Seq(Xva, yva, False), batch_size=args.batch)
+    from hawkeye.train.device_profile import get_profile
 
-    dev = "cuda" if torch.cuda.is_available() else (
-        "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
+    profile = get_profile(args.device)
+    dev = profile.device
+    batch = args.batch if args.batch is not None else profile.batch_size
+
+    # Features are already in RAM and augmentation is cheap numpy, so worker
+    # processes only add IPC overhead — and, via Seq's per-instance RNG, would
+    # repeat identical augmentations across workers. Keep the loader single-process.
+    tr_dl = DataLoader(Seq(Xtr, ytr, True), batch_size=batch, shuffle=True,
+                       num_workers=0, pin_memory=profile.pin_memory)
+    va_dl = DataLoader(Seq(Xva, yva, False), batch_size=batch,
+                       num_workers=0, pin_memory=profile.pin_memory)
+
     use_margin = not args.no_margin
-    model = build_model(FEATURE_DIM, n_classes, use_margin=use_margin).to(dev)
+    model = build_model(FEATURE_DIM, n_classes, hidden=profile.hidden,
+                        embed=profile.embed, use_margin=use_margin).to(dev)
 
     # inverse-frequency class weights -> the fix for imbalance
     cw = torch.tensor((counts.sum() / np.maximum(counts, 1)), dtype=torch.float32)
@@ -248,18 +258,27 @@ def train(args) -> None:
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
-    print(f"device={dev}  margin={use_margin}  classes={n_classes}  feat_dim={FEATURE_DIM}")
+    # Mixed precision on CUDA (RTX 3050): faster + less VRAM. On the CPU/MPS
+    # smoke-test fallback profile.use_amp is False, so both are no-ops.
+    scaler = torch.amp.GradScaler("cuda", enabled=profile.use_amp)
+
+    print(f"device={dev}  amp={profile.use_amp}  batch={batch}  "
+          f"hidden={profile.hidden}  margin={use_margin}  classes={n_classes}  "
+          f"feat_dim={FEATURE_DIM}")
     best_f1, best_state, patience = -1.0, None, 0
     for ep in range(args.epochs):
         model.train()
         run = 0.0
         for xb, yb in tr_dl:
-            xb, yb = xb.to(dev), yb.to(dev)
+            xb = xb.to(dev, non_blocking=profile.pin_memory)
+            yb = yb.to(dev, non_blocking=profile.pin_memory)
             opt.zero_grad()
-            out = model(xb, yb) if use_margin else model(xb)
-            loss = loss_fn(out, yb)
-            loss.backward()
-            opt.step()
+            with torch.autocast(device_type="cuda", enabled=profile.use_amp):
+                out = model(xb, yb) if use_margin else model(xb)
+                loss = loss_fn(out, yb)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
             run += loss.item()
         sched.step()
 
@@ -290,7 +309,7 @@ def train(args) -> None:
     torch.save({
         "state_dict": best_state or model.state_dict(),
         "labels": labels, "feat_dim": FEATURE_DIM, "seq_len": args.seq_len,
-        "hidden": 128, "embed": 128, "use_margin": use_margin,
+        "hidden": profile.hidden, "embed": profile.embed, "use_margin": use_margin,
         "mean": mean.tolist(), "std": std.tolist(),
         "val_macro_f1": best_f1,
     }, out_p)
@@ -305,7 +324,9 @@ def main() -> None:
     ap.add_argument("--cache", default="data/datasets/action_features.npz",
                     help="feature cache (skips re-extraction on re-runs)")
     ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--batch", type=int, default=None,
+                    help="batch size (default: from the device profile)")
+    ap.add_argument("--device", default="auto", help="cuda | cpu | auto (default)")
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--seq-len", type=int, default=32, dest="seq_len")
     ap.add_argument("--window-stride", type=int, default=16, dest="window_stride")

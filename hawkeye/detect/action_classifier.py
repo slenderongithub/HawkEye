@@ -44,11 +44,13 @@ def label_to_type(label: str) -> AnomalyType:
 
 class ActionClassifier:
     def __init__(self, model_path: str = "", device: str = "auto",
-                 min_conf: float = 0.5, infer_stride: int = 2):
+                 min_conf: float = 0.5, infer_stride: int = 2,
+                 violence_motion_min: float = 0.12):
         self.model_path = model_path
         self.device_pref = device
         self.min_conf = min_conf
         self.infer_stride = max(1, infer_stride)
+        self.violence_motion_min = violence_motion_min
         self._model = None
         self._device = "cpu"
         self._labels: List[str] = []
@@ -107,6 +109,14 @@ class ActionClassifier:
             if atype == AnomalyType("violence"):
                 # A fight requires at least 2 people visible in the frame.
                 if len(persons) < 2:
+                    continue
+                # Two close/overlapping people alone isn't a fight -- require
+                # kinetic evidence: sustained scene motion or an aggressive
+                # pose (wrists at/above shoulder height) on at least one
+                # person. Calm people standing close together have neither.
+                from . import geometry
+                aggressive = any(geometry.aggressive_pose(p) > 0.5 for p in persons)
+                if motion < self.violence_motion_min and not aggressive:
                     continue
             elif atype == AnomalyType("fall"):
                 # A fall requires the person to be in a near-horizontal posture

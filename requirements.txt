@@ -13,7 +13,7 @@ pydantic>=2.6
 
 # --- detection (required) : YOLO11 pose/detect ---
 ultralytics>=8.3.0
-torch>=2.3        # 2.3+ has NumPy 2.x-compatible wheels (2.2.0 doesn't, causes ABI warnings)
+torch>=2.4        # 2.4+ for the unified torch.amp.GradScaler(device) API + NumPy 2.x ABI
 torchvision>=0.18
 
 # --- server (required) : dashboard + API ---
@@ -29,3 +29,7 @@ onnxruntime>=1.17
 # --- cloud reasoning (optional) : Claude vision for Stage B ---
 # Needed only for the 'claude' reasoner backend. Set ANTHROPIC_API_KEY to use.
 anthropic>=0.40
+
+# --- dataset download (training only) : Kaggle API for setup_datasets.py ---
+# Needs ~/.kaggle/kaggle.json. Only used by the training scripts, not at runtime.
+kaggle>=1.6

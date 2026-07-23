@@ -31,7 +31,8 @@ class StageA:
         self.weapons = WeaponDetector(cfg.weapon_model, cfg.device, cfg.weapon_conf,
                                       cfg.weapon_labels or WEAPON_KEYWORDS)
         self.action = ActionClassifier(cfg.action_model, cfg.device,
-                                       cfg.action_min_conf, cfg.action_stride)
+                                       cfg.action_min_conf, cfg.action_stride,
+                                       cfg.violence_motion_min)
         self._last_trigger: Dict[str, float] = {}
 
     def load(self) -> "StageA":
