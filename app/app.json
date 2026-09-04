@@ -7,7 +7,7 @@
     "scheme": "hawkeye",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "backgroundColor": "#0B0E14",
+    "backgroundColor": "#1d1d1f",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.hawkeye.ops",

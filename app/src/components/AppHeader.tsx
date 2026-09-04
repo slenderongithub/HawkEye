@@ -60,7 +60,6 @@ const styles = StyleSheet.create({
   logo: {
     ...typography.title,
     color: palette.text,
-    letterSpacing: 0.3,
   },
   logoAccent: { color: palette.accent },
   screenTitle: {

@@ -11,18 +11,24 @@ ingest:
 detect:
   device: "auto"       # auto -> mps on Mac, cuda on the 3050, else cpu
   pose_model: "yolo11n-pose.pt"    # auto-downloaded by ultralytics on first run
-  weapon_model: "models/weapons.pt"     # trained YOLO for guns/knives (see docs/training.md); empty = disabled
+  # Trained YOLO for guns/knives (see docs/training.md). Empty = disabled.
+  # No weights ship with the repo — train your own with scripts/train_weapon.py
+  # and point this at the result, e.g. "models/weapons.pt".
+  weapon_model: ""
   weapon_conf: 0.65
-  # Only accept detections whose class name contains one of these substrings.
-  # We restrict to gun-related classes that scored >70% mAP50 during training.
-  # Knife classes (Knife, Knife_Deploy, Knife_Weapon) all scored 0% mAP50 and
-  # the generic "weapon" class produces too many false positives, so they are
-  # excluded until retrained on a better knife dataset.
-  weapon_labels: ["gun", "pistol", "rifle", "shotgun", "firearm", "larga", "heavyweapon"]
+  # Class-label filter for weapon detections. Empty => use the built-in keyword
+  # list in detect/weapons.py (guns AND knives), matched on token boundaries.
+  # Narrow this ONLY after reading the per-class mAP50 of your own trained model
+  # (scripts/train_weapon.py prints it) — do not carry over another run's list.
+  weapon_labels: []
   # Trained action classifier (violence/fall/normal) from scripts/train_action.py.
   # When set + present, it REPLACES the zero-training heuristics. Empty = heuristics.
-  action_model: "models/action_gru.pt"     # e.g. "models/action_gru.pt"
-  action_min_conf: 0.80
+  # No weights ship with the repo — train your own (see docs/training.md) and
+  # point this at the result, e.g. "models/action_gru.pt".
+  action_model: ""
+  # Fallback confidence floor only. A trained checkpoint carries per-class
+  # thresholds fitted on validation data at a target precision, and those win.
+  action_min_conf: 0.60
   # Suppress VIOLENCE when 2+ people are close/overlapping but scene motion is
   # below this and nobody has an aggressive (wrists-raised) pose -- fixes the
   # "two calm people standing near the camera" false-positive. Same 0-1 scale
@@ -30,6 +36,11 @@ detect:
   # fights with little visible motion get missed.
   violence_motion_min: 0.12
   action_stride: 2
+  # A class must clear its threshold on `hits` of the last `window` inference
+  # ticks before it is reported. Raise `hits` if you still see brief flickers;
+  # lower it if genuine short events (a single hard shove) are being missed.
+  action_hysteresis_window: 3
+  action_hysteresis_hits: 2
   person_conf: 0.35
   trigger_threshold: 0.60           # fused anomaly score above which Stage B fires
   motion_weight: 0.35               # how much scene-motion contributes to the fused score

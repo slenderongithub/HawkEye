@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   tileValue: { ...typography.heading },
-  tileLabel: { ...typography.micro, color: palette.textSecondary, letterSpacing: 0.3 },
+  tileLabel: { ...typography.micro, color: palette.textSecondary },
   section: { gap: spacing.xs },
   list: { gap: spacing.md },
   viewAll: { ...typography.caption, color: palette.accent, fontWeight: '700' },

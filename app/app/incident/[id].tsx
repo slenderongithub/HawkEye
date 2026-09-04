@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
   body: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xs,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
     gap: spacing.md,
   },
 

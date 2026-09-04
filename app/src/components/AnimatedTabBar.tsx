@@ -111,10 +111,10 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
-    borderRadius: radii.xl,
+    borderRadius: radii.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.hairlineStrong,
-    backgroundColor: 'rgba(20,25,38,0.75)',
+    backgroundColor: palette.surfaceTranslucent,
     overflow: 'hidden',
   },
   item: {
@@ -127,6 +127,5 @@ const styles = StyleSheet.create({
   label: {
     ...typography.micro,
     fontWeight: '700',
-    letterSpacing: 0.2,
   },
 });

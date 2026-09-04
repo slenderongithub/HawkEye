@@ -56,6 +56,7 @@ class Pipeline:
         self._triggers: "queue.Queue" = queue.Queue(maxsize=4)
         self._latest_raw: Optional[np.ndarray] = None
         self._running = False
+        self._stop_evt = threading.Event()
         self._capture_t: Optional[threading.Thread] = None
         self._worker_t: Optional[threading.Thread] = None
         self._attendance_t: Optional[threading.Thread] = None
@@ -64,6 +65,7 @@ class Pipeline:
     # --- lifecycle ---
     def start(self) -> None:
         log.info("Loading Stage A models...")
+        self._stop_evt.clear()          # allow restart after a stop()
         self.stage_a.load()
         if self.identity.available:
             # Loaded in the background (not blocking startup): the model
@@ -88,19 +90,36 @@ class Pipeline:
                  self.reasoner.name, self.identity.available,
                  self.cfg.identity.attendance_enabled)
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop the threads, then release resources — in that order.
+
+        Ordering matters: `_handle_trigger` writes incidents to SQLite from the
+        worker thread, so closing the stores while that thread is still draining
+        loses the incident (the write raises into the worker's own except block
+        and is only logged). We signal, join, and *then* close.
+        """
         self._running = False
+        self._stop_evt.set()
+        # The sentinel is a fast-path wakeup for a worker blocked in queue.get().
+        # It can be dropped if the queue is full, which is exactly why the worker
+        # also polls `_stop_evt` — the stop signal must not depend on queue space.
         try:
             self._triggers.put_nowait(_SENTINEL)
         except queue.Full:
             pass
+        for t in (self._capture_t, self._worker_t, self._attendance_t):
+            if t is not None and t.is_alive():
+                t.join(timeout=timeout)
+                if t.is_alive():
+                    log.warning("Thread %s did not stop within %.1fs; closing stores "
+                                "anyway.", t.name, timeout)
         self.hub.set_status(running=False)
         self._close_stores()
 
     def _close_stores(self) -> None:
         """Release SQLite connections so repeated start/stop cycles (dev reloads,
-        tests) don't leak file descriptors. Best-effort: a late write from a
-        still-draining worker thread would just log, not crash."""
+        tests) don't leak file descriptors. Called only after the worker threads
+        have been joined, so no in-flight write can race the close."""
         for store in (self.store, self.attendance, getattr(self.identity, "store", None)):
             if store is None:
                 continue
@@ -172,8 +191,13 @@ class Pipeline:
 
     # --- worker (heavy, triggered) ---
     def _worker_loop(self) -> None:
-        while self._running:
-            item = self._triggers.get()
+        while not self._stop_evt.is_set():
+            try:
+                # Poll rather than block forever: a dropped sentinel (full queue)
+                # must never be able to strand this thread.
+                item = self._triggers.get(timeout=0.5)
+            except queue.Empty:
+                continue
             if item is _SENTINEL:
                 break
             try:
@@ -221,8 +245,9 @@ class Pipeline:
         view and log presence. Independent of anomaly triggers. Reuses the
         recognizer (thread-safe via its internal inference lock)."""
         interval = max(0.5, self.cfg.identity.attendance_interval_sec)
-        while self._running:
-            time.sleep(interval)
+        # Wait on the stop event instead of sleeping, so shutdown doesn't have to
+        # block for a whole scan interval before this thread notices.
+        while not self._stop_evt.wait(interval):
             frame = self._latest_raw
             if frame is None or not self.identity.available:
                 continue

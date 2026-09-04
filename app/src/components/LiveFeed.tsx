@@ -8,7 +8,7 @@ import { ActivityIndicator, Image, Text, View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { palette, radii, spacing, typography, gradients } from '@/theme';
+import { palette, radii, spacing, typography, gradients, shadows } from '@/theme';
 import { useLive } from '@/stores/live';
 import { StatusDot } from './StatusDot';
 
@@ -72,6 +72,9 @@ const styles = StyleSheet.create({
     borderColor: palette.hairline,
     overflow: 'hidden',
     justifyContent: 'center',
+    // The system's single drop-shadow, spent here and nowhere else: the live
+    // feed is this app's "product resting on a surface".
+    ...shadows.product,
   },
   rounded: { borderRadius: radii.lg },
   frame: { width: '100%', height: '100%' },
@@ -93,15 +96,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
     borderRadius: radii.sm,
-    backgroundColor: 'rgba(255,77,94,0.16)',
+    backgroundColor: palette.redDim,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,77,94,0.5)',
+    borderColor: palette.redBorder,
   },
   liveDim: {
-    backgroundColor: 'rgba(92,100,120,0.16)',
+    backgroundColor: palette.chipTranslucent,
     borderColor: palette.hairlineStrong,
   },
-  liveText: { ...typography.micro, color: palette.red, letterSpacing: 1 },
+  liveText: { ...typography.micro, color: palette.red },
   overlay: {
     position: 'absolute',
     right: spacing.md,

@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 
@@ -20,7 +21,25 @@ from hawkeye.pipeline import Pipeline
 from hawkeye.runtime import get_config, get_hub, setup_logging
 
 log = logging.getLogger("hawkeye.server")
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# The UI is the Expo app's web build (`cd app && npm run build:web`), served by
+# this same process: one address for the dashboard, the REST API and the
+# WebSocket, instead of a separate dev server on another port. There is no
+# second hand-written dashboard to drift from it.
+APP_DIST = Path(__file__).resolve().parent.parent / "app" / "dist"
+
+_BUILD_MISSING_HTML = """<!doctype html>
+<meta charset="utf-8"><title>HawkEye — UI not built</title>
+<style>body{font:17px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+background:#1d1d1f;color:#f5f5f7;margin:0;display:grid;place-items:center;height:100vh}
+main{max-width:34rem;padding:2rem}code{background:#272729;padding:.15em .4em;
+border-radius:5px;font-size:.9em}a{color:#2997ff}</style>
+<main><h1>UI not built yet</h1>
+<p>The API and WebSocket are running, but the operator app hasn't been built.
+Build it once, then reload:</p>
+<p><code>cd app &amp;&amp; npm install &amp;&amp; npm run build:web</code></p>
+<p>Expected output at <code>app/dist/index.html</code>.
+API health: <a href="/api/health">/api/health</a></p></main>"""
 
 
 @asynccontextmanager
@@ -44,11 +63,11 @@ app = FastAPI(title="HawkEye", lifespan=lifespan)
 
 @app.get("/")
 async def index():
-    # No caching: this dashboard is actively developed, and a stale cached
-    # copy after a CSS/JS fix produces exactly the "still broken" confusion
-    # a hard refresh would otherwise silently paper over.
-    return FileResponse(STATIC_DIR / "index.html",
-                        headers={"Cache-Control": "no-store"})
+    # No caching on the HTML shell: it is actively developed, and a stale cached
+    # copy after a rebuild produces exactly the "still broken" confusion a hard
+    # refresh would otherwise silently paper over. Hashed assets under /_expo/
+    # are immutable and cached normally by StaticFiles.
+    return _index_response()
 
 
 @app.get("/api/status")
@@ -167,6 +186,15 @@ async def evidence(path: str):
     return FileResponse(target)
 
 
+def _index_response() -> Response:
+    """The app shell, or build instructions if the UI hasn't been built."""
+    index = APP_DIST / "index.html"
+    if not index.is_file():
+        return HTMLResponse(_BUILD_MISSING_HTML, status_code=503,
+                            headers={"Cache-Control": "no-store"})
+    return FileResponse(index, headers={"Cache-Control": "no-store"})
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
     await websocket.accept()
@@ -193,3 +221,31 @@ async def ws(websocket: WebSocket):
             await asyncio.sleep(1 / 15)
     except (WebSocketDisconnect, RuntimeError):
         return
+
+
+# ── Static UI ────────────────────────────────────────────────────────────────
+# Mounted LAST so nothing above can be shadowed: /api/*, /ws and / are already
+# bound by the time these catch-alls are registered.
+if APP_DIST.is_dir():
+    for sub in ("_expo", "assets"):
+        d = APP_DIST / sub
+        if d.is_dir():
+            app.mount(f"/{sub}", StaticFiles(directory=d), name=f"static-{sub}")
+
+
+@app.get("/{path:path}")
+async def spa_fallback(path: str):
+    """Serve the app shell for client-side routes (expo-router is a SPA).
+
+    A deep link like /incident/abc123 or a refresh on /settings has no file on
+    disk; the router resolves it in the browser. Real files under the build root
+    are still served directly, and unknown /api/* paths must 404 rather than
+    return HTML — a JSON client receiving an HTML shell is a far more confusing
+    failure than an honest 404.
+    """
+    if path.startswith("api/") or path == "ws":
+        raise HTTPException(404, "Not found")
+    candidate = (APP_DIST / path).resolve()
+    if APP_DIST.is_dir() and candidate.is_relative_to(APP_DIST.resolve()) and candidate.is_file():
+        return FileResponse(candidate)
+    return _index_response()

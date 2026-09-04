@@ -11,9 +11,11 @@ import numpy as np
 
 from ..config import DetectConfig
 from ..events.schema import AnomalyType, BBox, StageAEvent
-from . import heuristics
+from . import geometry, heuristics
 from .action_classifier import ActionClassifier
-from .pose import SKELETON, PersonDetection, PoseDetector
+from .pose import (ARM_EDGES, FACE_EDGES, L_HIP, L_SHOULDER, LEG_EDGES,
+                   R_HIP, R_SHOULDER, TORSO_EDGES, PersonDetection,
+                   PoseDetector)
 from .scene_anomaly import MotionAnomaly
 from .weapons import WEAPON_KEYWORDS, WeaponDetector
 
@@ -21,6 +23,11 @@ log = logging.getLogger("hawkeye.detect.stage_a")
 
 # BGR colors
 GREEN, RED, YELLOW, WHITE, CYAN = (80, 220, 80), (60, 60, 235), (40, 210, 235), (240, 240, 240), (235, 200, 60)
+# Per-limb-group debug colors (BGR), used only when the person isn't in alert
+# state — an alert paints the whole skeleton red so it stays the dominant
+# signal. Chosen to be distinguishable from each other and from RED/GREEN/CYAN.
+FACE_CLR, ARM_CLR, LEG_CLR, TORSO_CLR = (235, 200, 60), (60, 190, 255), (255, 140, 60), (240, 240, 240)
+SPINE_CLR = (0, 220, 255)  # bright amber — the vertical reference line
 
 
 class StageA:
@@ -32,7 +39,9 @@ class StageA:
                                       cfg.weapon_labels or WEAPON_KEYWORDS)
         self.action = ActionClassifier(cfg.action_model, cfg.device,
                                        cfg.action_min_conf, cfg.action_stride,
-                                       cfg.violence_motion_min)
+                                       cfg.violence_motion_min,
+                                       cfg.action_hysteresis_window,
+                                       cfg.action_hysteresis_hits)
         self._last_trigger: Dict[str, float] = {}
 
     def load(self) -> "StageA":
@@ -108,18 +117,52 @@ class StageA:
 
         img = frame.copy()
         alert = event.triggered
-        skel_color = RED if alert else GREEN
+        box_color = RED if alert else GREEN
+
+        def line(a, b, color, thickness=2):
+            if a is not None and b is not None:
+                cv2.line(img, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), color, thickness)
+
         for p in persons:
             x1, y1, x2, y2 = map(int, p.box)
-            cv2.rectangle(img, (x1, y1), (x2, y2), skel_color, 2)
-            for a, b in SKELETON:
-                pa, pb = p.kp(a), p.kp(b)
-                if pa is not None and pb is not None:
-                    cv2.line(img, (int(pa[0]), int(pa[1])), (int(pb[0]), int(pb[1])), skel_color, 2)
+            cv2.rectangle(img, (x1, y1), (x2, y2), box_color, 2)
+
+            if alert:
+                # Alert state: one uniform red skeleton, no anatomy detail — the
+                # eye should go straight to "this looks wrong", not parse limbs.
+                for a, b in FACE_EDGES + ARM_EDGES + LEG_EDGES + TORSO_EDGES:
+                    line(p.kp(a), p.kp(b), RED)
+            else:
+                # Normal state: color-coded by body part so a misdetected
+                # elbow/knee/eye is visible on its own line, not blended into a
+                # single-color tangle.
+                for a, b in FACE_EDGES:
+                    line(p.kp(a), p.kp(b), FACE_CLR)
+                for a, b in ARM_EDGES:
+                    line(p.kp(a), p.kp(b), ARM_CLR)
+                for a, b in LEG_EDGES:
+                    line(p.kp(a), p.kp(b), LEG_CLR)
+                for a, b in TORSO_EDGES:
+                    line(p.kp(a), p.kp(b), TORSO_CLR, 1)
+
+            # The spine: shoulder-center -> hip-center. Not a real keypoint pair
+            # (COCO-17 has no neck/pelvis point) — synthesized the same way
+            # `geometry.torso_horizontalness()` computes verticality, so this is
+            # a literal visualization of the signal fall detection runs on,
+            # rather than the shoulder/hip diagonals, which don't read as
+            # "vertical" at most camera angles.
+            neck = geometry.mid(p.kp(L_SHOULDER), p.kp(R_SHOULDER))
+            hip_c = geometry.mid(p.kp(L_HIP), p.kp(R_HIP))
+            line(neck, hip_c, RED if alert else SPINE_CLR, 3)
+
             for idx in range(17):
                 x, y, c = p.keypoints[idx]
                 if c >= 0.3:
-                    cv2.circle(img, (int(x), int(y)), 3, YELLOW, -1)
+                    # Major joints (shoulders/elbows/hips/knees/ankles) drawn
+                    # slightly larger than face points — the ones that matter
+                    # for posture/action are the ones you should see first.
+                    r = 4 if idx >= 5 else 2
+                    cv2.circle(img, (int(x), int(y)), r, YELLOW, -1)
 
         for w in weapon_dets:
             x1, y1, x2, y2 = map(int, w.box)

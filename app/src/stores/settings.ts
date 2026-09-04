@@ -11,8 +11,31 @@ import * as SecureStore from 'expo-secure-store';
 
 const KEY = 'hawkeye.serverBase';
 
-/** Sensible LAN default; the emulator/simulator and web all reach localhost. */
-const DEFAULT_BASE = 'http://127.0.0.1:8000';
+/** Fallback when the origin can't be used (native builds, SSR, file://). */
+const FALLBACK_BASE = 'http://127.0.0.1:8000';
+
+/**
+ * Default server address.
+ *
+ * The FastAPI backend serves this app's web build itself, so on web the server
+ * is simply wherever the page came from — one address for the UI, the REST API
+ * and the WebSocket. Reading `location.origin` means opening the backend just
+ * works, with no trip through Settings.
+ *
+ * Native builds have no origin (the bundle is local), so they keep the LAN
+ * default and the Settings override — a phone pointing at a machine on the
+ * network is still a real deployment.
+ */
+function defaultBase(): string {
+  if (Platform.OS === 'web') {
+    const origin = globalThis.location?.origin;
+    // file:// pages report an "null"/opaque origin, which is not a server.
+    if (origin && /^https?:/i.test(origin)) return origin.replace(/\/+$/, '');
+  }
+  return FALLBACK_BASE;
+}
+
+const DEFAULT_BASE = defaultBase();
 
 type SettingsState = {
   /** Base URL, e.g. "http://192.168.1.42:8000" (no trailing slash). */

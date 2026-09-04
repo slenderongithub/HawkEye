@@ -7,7 +7,7 @@ import { Text, View, StyleSheet } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { palette, radii, spacing, typography, shadows } from '@/theme';
+import { palette, radii, spacing, typography } from '@/theme';
 import { useToast, type Toast, type ToastTone } from '@/stores/toast';
 
 const TONES: Record<ToastTone, { color: string; bg: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -72,7 +72,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: palette.surfaceElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    ...shadows.floating,
   },
   text: {
     ...typography.body,

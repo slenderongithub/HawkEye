@@ -1,18 +1,29 @@
 """The action-classification network — shared by training and inference.
 
-Two ideas here directly target the "violence vs fall get confused" problem:
+Design notes, each aimed at the "violence and fall get classified as each other"
+failure mode:
 
-  * Temporal model (Conv1d -> BiGRU -> attention pooling): looks at HOW the
-    pose evolves over ~1.5s, not a single frame. A fall is a downward collapse
-    then stillness; a fight is sustained high-frequency two-person motion. Only
-    a temporal model can tell those trajectories apart.
+  * **Multi-scale temporal convolution.** A fall is a ~0.5 s ballistic event
+    (collapse, impact, stillness); violence is a multi-second oscillation. One
+    convolution kernel cannot see both scales well, so the stem runs kernels of
+    3 / 5 / 9 frames in parallel and concatenates them. The network gets a short
+    view and a long view of the same window.
 
-  * Optional angular-margin head (ArcFace-style, `ArcMargin`): instead of a
-    plain linear classifier, it forces each class's embeddings into a tighter
-    angular cone with an explicit margin `m` between classes. This is literally
-    "maximize the margin between classes" — the exact fix for two classes whose
-    decision boundary is fuzzy. (Same technique the identity module uses for
-    faces; here we reuse it for actions.) Toggle with `use_margin`.
+  * **BiGRU + hybrid pooling.** The recurrent layers model the *order* of events
+    (upright → collapse → still is a fall; still → collapse → upright is someone
+    standing up). Pooling concatenates attention-weighted, mean and max pooling:
+    attention finds the decisive moment, mean captures sustained behaviour, max
+    captures the single most extreme frame. Fights are sustained (mean matters);
+    falls are peaky (max matters).
+
+  * **A calibrated head by default.** The previous revision always used an
+    ArcFace-style angular-margin head with scale s=30, which makes softmax
+    outputs saturate at ~1.0 — so the ``action_min_conf`` threshold that gates
+    every downstream trigger was meaningless. Here the default head is a plain
+    linear classifier whose logits are divided by a learned/fitted
+    ``temperature`` (fitted post-hoc on the validation split), giving
+    probabilities that actually mean something. ``use_margin=True`` remains
+    available for experiments.
 
 Heavy torch import lives at module top, but this module is only imported lazily
 (from the training script and from ActionClassifier.load()), so importing the
@@ -26,7 +37,12 @@ import torch.nn.functional as F
 
 
 class ArcMargin(nn.Module):
-    """Additive angular margin head (ArcFace). Enlarges inter-class margins."""
+    """Additive angular margin head (ArcFace). Enlarges inter-class margins.
+
+    Note: its scaled-cosine logits are deliberately over-confident, so anything
+    thresholding on softmax probability should prefer the linear head plus
+    temperature scaling. Kept for ablation experiments.
+    """
 
     def __init__(self, in_features: int, out_features: int, s: float = 30.0, m: float = 0.35):
         super().__init__()
@@ -44,31 +60,69 @@ class ArcMargin(nn.Module):
         return self.s * (onehot * target + (1 - onehot) * cos)
 
 
+class MultiScaleStem(nn.Module):
+    """Parallel temporal convolutions at three receptive fields."""
+
+    def __init__(self, feat_dim: int, hidden: int, kernels=(3, 5, 9)):
+        super().__init__()
+        per = hidden // len(kernels)
+        self.branches = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv1d(feat_dim, per, k, padding=k // 2),
+                nn.BatchNorm1d(per),
+                nn.GELU(),
+            ) for k in kernels
+        ])
+        merged = per * len(kernels)
+        self.merge = nn.Sequential(
+            nn.Conv1d(merged, hidden, 3, padding=1),
+            nn.BatchNorm1d(hidden),
+            nn.GELU(),
+            nn.Dropout(0.1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:   # x: (B, F, T)
+        return self.merge(torch.cat([b(x) for b in self.branches], dim=1))
+
+
 class ActionNet(nn.Module):
-    def __init__(self, feat_dim: int, num_classes: int, hidden: int = 128,
-                 embed: int = 128, use_margin: bool = True):
+    def __init__(self, feat_dim: int, num_classes: int, hidden: int = 192,
+                 embed: int = 192, use_margin: bool = False, dropout: float = 0.3):
         super().__init__()
         self.use_margin = use_margin
-        self.conv = nn.Sequential(
-            nn.Conv1d(feat_dim, hidden, 5, padding=2), nn.BatchNorm1d(hidden), nn.ReLU(),
-            nn.Conv1d(hidden, hidden, 3, padding=1), nn.BatchNorm1d(hidden), nn.ReLU(),
-        )
+        self.stem = MultiScaleStem(feat_dim, hidden)
         self.gru = nn.GRU(hidden, hidden, num_layers=2, batch_first=True,
-                          bidirectional=True, dropout=0.3)
-        self.attn = nn.Linear(hidden * 2, 1)
-        self.embed = nn.Sequential(nn.Linear(hidden * 2, embed), nn.BatchNorm1d(embed))
+                          bidirectional=True, dropout=dropout)
+        self.attn = nn.Sequential(
+            nn.Linear(hidden * 2, hidden // 2), nn.Tanh(), nn.Linear(hidden // 2, 1)
+        )
+        # attention + mean + max pooling concatenated
+        self.embed = nn.Sequential(
+            nn.Linear(hidden * 6, embed), nn.BatchNorm1d(embed), nn.GELU(),
+            nn.Dropout(dropout),
+        )
         self.head = ArcMargin(embed, num_classes) if use_margin else nn.Linear(embed, num_classes)
+        # Post-hoc calibration factor, fitted on the validation split after
+        # training and applied to logits at inference. 1.0 = uncalibrated.
+        self.register_buffer("temperature", torch.ones(1))
+
+    def features(self, x: torch.Tensor) -> torch.Tensor:
+        """Sequence (B, T, F) -> embedding (B, embed)."""
+        h = self.stem(x.transpose(1, 2)).transpose(1, 2)        # (B, T, hidden)
+        h, _ = self.gru(h)                                      # (B, T, 2*hidden)
+        w = torch.softmax(self.attn(h).squeeze(-1), dim=1).unsqueeze(-1)
+        pooled = torch.cat([(h * w).sum(1), h.mean(1), h.max(1).values], dim=1)
+        return self.embed(pooled)
 
     def forward(self, x: torch.Tensor, labels: torch.Tensor | None = None) -> torch.Tensor:
-        # x: (B, T, F)
-        h = self.conv(x.transpose(1, 2)).transpose(1, 2)       # (B, T, hidden)
-        h, _ = self.gru(h)                                     # (B, T, 2*hidden)
-        w = torch.softmax(self.attn(h).squeeze(-1), dim=1).unsqueeze(-1)
-        pooled = (h * w).sum(1)                                # (B, 2*hidden)
-        emb = self.embed(pooled)                               # (B, embed)
+        emb = self.features(x)
         return self.head(emb, labels) if self.use_margin else self.head(emb)
 
+    def calibrated_logits(self, x: torch.Tensor) -> torch.Tensor:
+        """Inference logits with temperature scaling applied."""
+        return self.forward(x) / self.temperature.clamp(min=1e-2)
 
-def build_model(feat_dim: int, num_classes: int, hidden: int = 128,
-                embed: int = 128, use_margin: bool = True) -> ActionNet:
+
+def build_model(feat_dim: int, num_classes: int, hidden: int = 192,
+                embed: int = 192, use_margin: bool = False) -> ActionNet:
     return ActionNet(feat_dim, num_classes, hidden, embed, use_margin)

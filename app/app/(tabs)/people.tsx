@@ -447,7 +447,6 @@ const styles = StyleSheet.create({
   avatarText: {
     ...typography.bodyStrong,
     color: palette.text,
-    letterSpacing: 0.5,
   },
   personBody: { flex: 1, gap: 2 },
   personName: { ...typography.bodyStrong, color: palette.text },

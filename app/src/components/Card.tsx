@@ -2,13 +2,17 @@
 import React from 'react';
 import { View, StyleSheet, type ViewStyle, type StyleProp } from 'react-native';
 import { PressableScale } from './PressableScale';
-import { palette, radii, spacing, shadows } from '@/theme';
+import { palette, radii, spacing } from '@/theme';
 
 type Props = {
   children: React.ReactNode;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
-  /** Elevated variant: brighter surface + soft shadow (for hero cards). */
+  /**
+   * Elevated variant: a micro-step lighter surface plus a stronger hairline.
+   * Deliberately not a shadow — the design language keeps its single drop-shadow
+   * for the live feed and builds every other level from surface colour.
+   */
   elevated?: boolean;
   padded?: boolean;
 };
@@ -42,7 +46,7 @@ const styles = StyleSheet.create({
   },
   elevated: {
     backgroundColor: palette.surfaceElevated,
-    ...shadows.card,
+    borderColor: palette.hairlineStrong,
   },
   padded: {
     padding: spacing.lg,

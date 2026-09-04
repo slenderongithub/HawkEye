@@ -1,10 +1,23 @@
-# HawkEye — deps for the RTX 3050 laptop (NVIDIA CUDA, 4 GB VRAM)
-# This is the "GPU station" for training runs and optional local-VLM inference.
+# HawkEye — deps for an NVIDIA CUDA training box (Windows or Linux)
+# Reference machine: Acer Predator, Core Ultra 9 + RTX 5060 (Blackwell, 8 GB).
 #
-# 1) Install a CUDA build of PyTorch FIRST (pick the CUDA version you have):
-#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-# 2) Then:
-#      pip install -r requirements-cuda.txt
+# ── 1) Install a CUDA build of PyTorch FIRST — the wheel must match your GPU ──
+#
+#   RTX 50-series (5060/5070/5080/5090, Blackwell / sm_120)  ->  cu128, torch>=2.7
+#     pip install "torch>=2.7" torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+#   RTX 40/30-series (Ada / Ampere)                          ->  cu124 is fine
+#     pip install "torch>=2.4" torchvision --index-url https://download.pytorch.org/whl/cu124
+#
+#   Blackwell is NOT optional here: wheels older than cu128 ship no sm_120 kernels,
+#   so a 5060 fails at the first conv with
+#     "CUDA error: no kernel image is available for execution on the device"
+#   torch.cuda.is_available() still returns True in that state — it is not a check
+#   that the wheel actually matches the card. Verify with the smoke test in
+#   docs/training.md §0.6 (it runs a real op, not just is_available()).
+#
+# ── 2) Then the rest ──
+#     pip install -r requirements-cuda.txt
 
 numpy>=1.26,<2.2
 opencv-python>=4.9
@@ -18,7 +31,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 
-# GPU face recognition
+# GPU face recognition (optional — identity disables itself if this fails)
 insightface>=0.7.3
 onnxruntime-gpu>=1.17
 
@@ -26,10 +39,10 @@ onnxruntime-gpu>=1.17
 anthropic>=0.40
 
 # dataset download (training) : Kaggle API for setup_datasets.py / train_weapon.py --auto-download
-# Needs ~/.kaggle/kaggle.json on the training machine.
+# Needs kaggle.json on the training machine (%USERPROFILE%\.kaggle\ on Windows).
 kaggle>=1.6
 
-# --- local VLM (optional offline Stage B) : Moondream2 fits 4 GB VRAM ---
+# --- local VLM (optional offline Stage B) ---
 # transformers>=4.44
 # accelerate>=0.30
 # einops

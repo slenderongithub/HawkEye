@@ -1,65 +1,62 @@
 # Training Guide — improving the models
 
-This guide is for whoever trains HawkEye's models (e.g. on the RTX 3050). It
-explains **why** the current detector confuses violence and fall, exactly what
-in the codebase fixes it, and the step-by-step to train both the action
-classifier and the weapon detector and plug them in.
+This guide explains **why** the detector used to confuse violence and fall,
+exactly what in the codebase fixes it, and the step-by-step to train both the
+action classifier and the weapon detector and plug them in.
+
+Training target is **Apple Silicon (M2, MPS)** —
+`hawkeye/train/device_profile.py` picks the right settings for whatever it finds.
 
 You do **not** need to touch the app code to improve accuracy — you train a
 model, drop the weights file in, and point the config at it.
 
-> **Note:** you may notice a new `hawkeye/attendance/` module and an Attendance
-> tab on the dashboard if you pull recent changes — that's an unrelated Phase 1
-> feature (face-recognition attendance logging, reusing the same InsightFace
-> identity DB) and needs no training. Nothing in this guide is affected by it.
-
 This guide covers everything **from a fresh machine to a trained model plugged
-in** — Section 0 is git/setup, Sections 1+ are the actual training.
+in** — Section 0 is setup, Sections 1+ are the actual training.
 
 ---
 
-## 0. Get the repo and set up your environment (RTX 3050 laptop)
+## 0. Set up your environment
 
-### 0.1 Clone the repo and check out the branch
-
-You need write access first — ask the repo owner to add you as a **Collaborator**
-(GitHub → repo → Settings → Collaborators) if you haven't been added yet.
+### 0.1 Get the repo
 
 ```bash
 git clone https://github.com/slenderongithub/HawkEye.git
 cd HawkEye
-git checkout phase-1-core
-git pull origin phase-1-core
 ```
 
-Now branch off `phase-1-core` for your training work — don't push directly to
-it, so we don't collide on the same branch:
+Work on a branch, not `main`:
 
 ```bash
 git checkout -b train-action-model
 ```
 
-### 0.2 Set up the Python environment (CUDA)
+### 0.2 Set up the Python environment
 
 ```bash
-# 1) Install a CUDA build of PyTorch FIRST (match your installed CUDA version —
-#    check with `nvidia-smi`; cu121 works for CUDA 12.1+):
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-# 2) Then the rest of the CUDA requirements:
-pip install -r requirements-cuda.txt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Verify the GPU is visible:
+Verify the accelerator is visible:
 ```bash
-python -c "import torch; print('CUDA available:', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+python -c "import torch; print('mps:', torch.backends.mps.is_available())"
 ```
-If this prints `CUDA available: False`, the training scripts still run but print a
-loud **"CPU/smoke-test configuration — NOT a real training run"** warning and fall
-back to CPU (very slow, and hyper-parameters are not tuned for it). This fallback
-exists only so the code can be import/smoke-tested on a non-CUDA machine — **fix
-the CUDA/torch install before training on real data.** All the CUDA/CPU/MPS
-branching lives in one place: `hawkeye/train/device_profile.py`.
+MPS is a **first-class training target** — the action classifier is small
+(a few million parameters over a 64-frame window) and trains in minutes on an
+M2 once features are cached. If MPS is not available the scripts still run on
+CPU, just slowly. All device branching lives in one place:
+`hawkeye/train/device_profile.py`.
+
+### 0.2b Run the self-checks first
+
+```bash
+python tests/test_action_pipeline.py
+python tests/test_pipeline_shutdown.py
+```
+
+These take seconds and assert the things that silently destroyed the previous
+model (see Section 1). If they fail, fix that before spending hours training.
 
 ### 0.3 Set up the Kaggle API token (for automatic dataset download)
 
@@ -69,7 +66,7 @@ Most datasets are auto-downloaded via the Kaggle API. Create a token once:
 2. Save the downloaded `kaggle.json` to `~/.kaggle/kaggle.json`
 3. `chmod 600 ~/.kaggle/kaggle.json`
 
-`pip install -r requirements-cuda.txt` already installs the `kaggle` package.
+`pip install -r requirements.txt` already installs the `kaggle` package.
 
 ### 0.4 Get the datasets
 
@@ -92,36 +89,87 @@ Then open a Pull Request on GitHub: **base `phase-1-core` ← compare
 `train-action-model`**. Send the trained `models/action_gru.pt` file to the
 repo owner directly (Drive/USB/etc.) so they can drop it in locally too.
 
+### 0.6 Training on Windows + NVIDIA CUDA
+
+The trainers are device-agnostic — `hawkeye/train/device_profile.py` resolves
+`cuda → mps → cpu` and picks the matching knobs. Three things are specific to a
+Windows/CUDA box:
+
+**1. Install a PyTorch wheel that matches the GPU.** Use
+`requirements-cuda.txt` instead of `requirements.txt`:
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+# RTX 50-series (Blackwell) needs cu128 + torch>=2.7 — older wheels have no sm_120 kernels
+pip install "torch>=2.7" torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements-cuda.txt
+```
+
+Verify the wheel actually drives the card — `torch.cuda.is_available()` returns
+`True` even when the wheel has no kernels for it, so run a real op:
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0)); print((torch.randn(8,8,device='cuda')@torch.randn(8,8,device='cuda')).sum().item())"
+```
+
+A `no kernel image is available for execution on the device` error here means the
+CUDA build is too old for the GPU — reinstall from the right `--index-url`.
+
+**2. DataLoader workers are forced to 0 for the action trainer on Windows.**
+Windows spawns workers instead of forking, so the DataLoader must pickle its
+Dataset; `train_action.py`'s Dataset closes over the in-RAM feature cache, which
+is both unpicklable and would be copied per worker. This is handled
+automatically in `device_profile.py` — the GPU step dominates anyway. The weapon
+trainer (ultralytics, disk-bound, picklable dataset) keeps its workers.
+
+**3. Redirecting output to a file needs UTF-8.** These scripts print `✓ ═ →`,
+and Windows uses the legacy code page for redirected (non-console) output, so
+`python scripts/train_action.py ... > train.log` raises `UnicodeEncodeError`.
+Either don't redirect, or force UTF-8:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+```
+
 ---
 
-## 1. Why violence and fall get confused (and the fix)
+## 1. Why violence and fall got confused (and the fix)
 
-The app ships with **zero-training heuristics** (`hawkeye/detect/heuristics.py`)
-that look at a *single frame* of pose keypoints. That's why it mixes up classes:
+There were two separate problems: a **modelling** one and, far more damaging,
+two **silent bugs** that made the previous model useless in production while
+reporting ~0.95 validation macro-F1. Read this section before changing anything.
 
-- A single frame can't tell a **fall** (a downward collapse, then stillness)
-  from a **fight** (sustained two-person motion) — both just look like "limbs in
-  odd positions."
-- The heuristics have no learned decision boundary, so there's no *margin*
-  between classes — borderline poses flip between labels.
+### 1a. The two bugs that made a "0.95 F1" model behave randomly
 
-The trained classifier fixes this with **five levers**, all already implemented
-in `scripts/train_action.py` and on by default:
+| Bug | What happened | Fix |
+|---|---|---|
+| **Train/serve feature skew** | Training extracted features with `motion=0.0` hardcoded, while the live pipeline passed a real scene-motion score. Standardisation divided that dimension by its training std (≈0, floored to `1e-6`), so a live motion value of `0.35` entered the network as **~350,000**. One dimension, five orders of magnitude out, dominated every activation. | Training now computes motion with the *same* `MotionAnomaly` class the live pipeline uses. `skeleton_features.standardize()` is shared by both paths, **floors variance** at `MIN_STD` and **clips output** to ±8, so this class of bug cannot recur silently. |
+| **Window-level data leakage** | Clips were cut into windows with 50% overlap and split *randomly*. Window `[0:32]` went to train and `[16:48]` — sharing half its frames — went to validation. The model memorised clips; validation applauded. Every number the old run printed was fiction, which is why nobody caught the bug above. | The split is now **grouped by source clip** (`group_split()`): every window from one video goes entirely to train, val, or test. There is also a real **held-out test set**, evaluated exactly once. |
+
+Both are guarded by `tests/test_action_pipeline.py`. Run it.
+
+### 1b. The modelling problem
+
+A single frame can't tell a **fall** (a downward collapse, then stillness) from a
+**fight** (sustained two-person motion) — both are "limbs in odd positions". The
+current pipeline separates them by construction:
 
 | Lever | Where | Why it separates the classes |
 |---|---|---|
-| **Separating features** | `hawkeye/detect/skeleton_features.py` | Encodes fall cues (torso verticality, hip dropping in frame, wide bbox) *and* fight cues (person count, closeness, mutual motion) as explicit dimensions. When the thing that distinguishes the classes is a literal feature, the boundary is clean. |
-| **Temporal model** | `hawkeye/detect/action_model.py` (`ActionNet`: Conv1d→BiGRU→attention) | Reads ~1.5s of motion, not one frame — so it sees the *trajectory* (collapse-then-still vs sustained struggle). |
-| **Angular-margin head** | `ArcMargin` in `action_model.py` (`--no-margin` to disable) | ArcFace-style additive margin literally **maximizes the angular margin between classes** — the direct answer to "the margins aren't maximized." |
-| **Class balancing** | inverse-frequency weights in `train_action.py` | Stops a large violence set from swamping a small fall set (a top cause of one class being predicted as the other). |
-| **Augmentation** | `augment()` in `train_action.py` | Mirror flips, jitter, noise, keypoint dropout → generalizes from few clips. |
+| **Two-actor features** | `hawkeye/detect/skeleton_features.py` | The vector carries actor A *and* the nearest actor B, plus the geometry *between* them — wrist→head and wrist→torso reach distances, closing speed, vertical dominance. Violence is a two-body interaction; encoding only one skeleton threw that away. |
+| **Fall kinematics** | same module (`DYN` block) | A fall is downward hip **acceleration** followed by **stillness**. Downward velocity alone is not enough — sitting down fast has that too. Both are explicit dimensions. |
+| **Occlusion awareness** | `A_KPC` block | Keypoint confidences are features. A zeroed occluded joint would otherwise read as "joint located exactly at the hip", which the network will happily learn from. |
+| **Multi-scale temporal model** | `action_model.py` (`MultiScaleStem` → BiGRU → attention+mean+max pooling) | Parallel 3/5/9-frame kernels see a short ballistic fall and a long sustained fight in the same window. Falls are peaky (max pooling matters), fights are sustained (mean pooling matters). |
+| **Calibrated confidence** | temperature scaling + per-class thresholds | The old ArcFace head scaled logits by 30, saturating softmax at ~1.0 — so the `action_min_conf` gate every trigger depended on was decorative. A temperature is now fitted on validation and each class gets its own threshold at a target precision. |
+| **Temporal hysteresis** | `action_classifier.py` | A class must hold across several consecutive inference ticks before it is emitted. One window over threshold is noise, not an event. |
+| **Anti-shortcut augmentation** | `augment()` in `train_action.py` | Camera roll, anisotropic scaling, occlusion, and **actor-B dropout**. That last one matters: without it the net shortcuts to "two skeletons ⇒ violence", which is exactly how a bystander standing over a collapsed person becomes an assault alert. |
 
-And every epoch prints a **confusion matrix** so you can literally watch the
-violence↔fall off-diagonal cells shrink as you tune.
-
-> **Golden rule:** features are computed by the *same* module
-> (`skeleton_features.py`) during training and live inference. Never change
-> features in only one place — change that one file and both stay in sync.
+> **Golden rule:** features and standardisation are computed by the *same* module
+> (`skeleton_features.py`) in training, evaluation, and live inference. Never
+> reimplement either in a second place — that is precisely how the skew bug
+> happened, and it is why `scripts/run_pipeline.py` (a drifted duplicate trainer)
+> was deleted.
 
 ---
 
@@ -193,48 +241,135 @@ compensates for imbalance, but more real clips for the minority class helps more
 > in it is a standalone command you can also run individually. The rest of this
 > section covers the action step on its own.
 
-On the RTX 3050 (CUDA auto-detected):
 ```bash
-source .venv/bin/activate            # or the CUDA env
-python scripts/train_action.py --data data/datasets/actions --epochs 30
+source .venv/bin/activate
+python scripts/train_action.py --data data/datasets/actions --epochs 40 \
+    --report reports/action_metrics.json
 ```
 
-The device and its hyper-parameters come from `hawkeye/train/device_profile.py`:
-on **CUDA** it enables mixed-precision (AMP), pins memory, and uses a larger
-batch/model capacity; on non-CUDA it drops to the safe CPU smoke-test config.
-Force a device with `--device cuda|cpu` and override batch with `--batch N`.
+The device and its hyper-parameters come from `hawkeye/train/device_profile.py`.
+Force a device with `--device mps|cpu` and override batch with `--batch N`.
 
 What happens:
-1. Extracts YOLO-pose features from every clip (cached to
-   `data/datasets/action_features.npz` — re-runs skip this and are fast).
-   **After adding new clips, delete that `.npz`** (or pass `--cache ""`) so the
-   new data is actually picked up — otherwise the stale cache is reused.
-2. Stratified train/val split, standardization, class weights.
-3. Trains `ActionNet` with the angular-margin head.
-4. Prints per-epoch **confusion matrix + precision/recall/F1**.
-5. Saves the best-val checkpoint to `models/action_gru.pt`.
+1. Extracts YOLO-pose + motion features from every clip, cached **per clip** to
+   `data/datasets/action_features.npz` — re-runs skip this and are fast.
+   **After adding new clips, delete that `.npz`** so the new data is picked up.
+2. **Grouped split by source clip** into train / val / test — no window from one
+   video ever spans two splits.
+3. Trains `ActionNet`, printing a confusion matrix and the violence↔fall
+   confusion rate every epoch.
+4. Fits a **temperature** and **per-class thresholds** on validation.
+5. Evaluates the **held-out test set once**, plus a per-source accuracy table.
+6. Saves everything (weights, mean/std, temperature, thresholds, test confusion)
+   to `models/action_gru.pt`.
 
 Useful flags:
 ```bash
---epochs 50 --batch 32 --lr 1e-3      # training length / size / step
---seq-len 32                          # frames per sample (~1.5s at 20 fps)
---window-stride 16                    # sliding-window step (smaller = more samples)
---no-margin                           # ablation: plain softmax instead of angular margin
---label-smoothing 0.05
+--epochs 60 --batch 32 --lr 2e-3      # training length / size / step
+--seq-len 64                          # frames per window (~3s at 20 fps)
+--window-stride 24                    # sliding-window step (smaller = more samples)
+--target-precision 0.90               # operating point each class's threshold aims for
+--test-split 0.15 --val-split 0.15
+--max-per-class 655                   # cap clips per class (0 = use everything)
+--extract-batch 32                    # frames per pose forward pass (see below)
+--window-cache-gb 4.0                 # RAM for caching built windows (0 = off)
+--no-tf32                             # disable TF32 matmuls on CUDA
+--margin                              # ablation: ArcFace head (uncalibrated logits)
 ```
 
-### Reading the confusion matrix (your main tool)
+#### Keeping the GPU busy
 
-Rows = true class, columns = predicted. The number at
-`[violence, fall]` is "violence clips wrongly called fall." Watch those
-off-diagonal cells. If they stay high:
-- **More/cleaner data** for the confused pair (biggest lever).
-- Increase the margin: bump `m` in `ArcMargin(...)` from `0.30` toward `0.40`.
-- Longer clips: raise `--seq-len` so the temporal difference is clearer.
-- Check labels aren't mixed (a mislabeled clip poisons the boundary).
+Two things dominate the wall clock, and neither is the model — it is small enough
+that a modern GPU is mostly idle unless it is fed properly.
 
-Compare `--no-margin` vs default runs — the margin head should raise F1 and
-shrink the violence↔fall off-diagonals. That comparison is a great thesis result.
+**Feature extraction** is the bigger one by far (millions of frames). Pose runs
+`--extract-batch` frames per forward pass; one frame per call spends most of its
+time on launch overhead. Measured on an M2 (MPS), 100 frames of a real clip:
+
+| `--extract-batch` | throughput |
+|---|---|
+| 1 (the old behaviour) | 55 fps |
+| 32 (default) | 159 fps |
+| 64 | 163 fps |
+
+Batching is worth ~3×, and past 32 it flattens while frame buffers keep growing,
+so 32 is the default. Video decode is *not* the constraint (~3500 fps). Raise it
+on a large-VRAM card, lower it if extraction hits an out-of-memory error.
+
+**Per-epoch cost** is dominated by rebuilding windows, not by gradients. A window
+is a pure function of `(clip, start)`, but it is used once per epoch for training
+and again by the validation pass each epoch — so over 40 epochs each window was
+being rebuilt dozens of times on the main thread while the GPU waited. They are
+now cached when they fit in `--window-cache-gb` (a window is
+`seq_len × 188 × 4` bytes ≈ 47 KB at the defaults). The run prints whether the
+cache is on:
+
+```
+window cache: ON (61234 windows ≈ 2.75 GB, budget 4.0 GB)
+```
+
+If it says `off` because of the budget, raise `--window-cache-gb` when you have
+the RAM. It is disabled automatically when the loader uses worker processes,
+since each worker would fill its own copy.
+
+`--batch` is deliberately left at the device-profile default. Raising it does
+increase GPU utilisation, but it also changes the optimisation (the LR schedule
+is tuned for the default), so treat it as a modelling choice, not a free speedup
+— and keep it identical across runs you intend to compare.
+
+#### Balanced vs. imbalanced — running both off one cache
+
+Class counts are usually lopsided (falls are the scarce class). Loss is
+class-weighted to compensate, but whether that beats simply training on equal
+counts is an empirical question, so test it rather than assume:
+
+```bash
+# 1. full set — builds the feature cache
+python scripts/train_action.py --data data/datasets/actions \
+    --out models/action_gru_full.pt --cache data/datasets/action_features.npz \
+    --epochs 40 --report reports/action_metrics_full.json
+
+# 2. balanced — SAME --cache, so extraction is skipped entirely
+python scripts/train_action.py --data data/datasets/actions \
+    --out models/action_gru_balanced.pt --cache data/datasets/action_features.npz \
+    --max-per-class 655 --epochs 40 --report reports/action_metrics_balanced.json
+```
+
+`--max-per-class` is applied **after** the cache is loaded, which is the whole
+point: pose extraction is hours, training is minutes, so the second run costs
+only the minutes. Do not build a second copy of the dataset for this — a
+symlinked or duplicated tree just re-extracts the same features under a
+different path.
+
+Compare the two `reports/*.json` on `test_macro_f1` first, then on the
+violence↔fall entries of `test_confusion`. Keep the winner's `.pt`.
+
+### Reading the output (in order of how much it matters)
+
+1. **The held-out TEST block, not the per-epoch validation numbers.** Validation
+   picked the checkpoint and tuned the thresholds, so it is optimistic by
+   construction. The test block is the honest number.
+2. **`violence→fall` and `fall→violence`.** This is the pair the whole pipeline
+   exists to keep apart; it is printed on its own line for that reason. Rows =
+   true class, columns = predicted.
+3. **The per-source accuracy table.** If accuracy is high on one source dataset
+   and low on another, the model learned *which dataset a clip came from* —
+   camera angle, resolution, compression — rather than what happens in it. This
+   is the single most common way a surveillance model looks excellent offline and
+   fails on your actual camera. A large gap means: mix sources within each class,
+   or gather data from the deployment camera itself.
+4. **The comparison against the heuristic baseline** (`eval/evaluate.py compare`).
+   If the trained model does not beat `hawkeye/detect/heuristics.py`, it is not
+   ready — ship the heuristics instead.
+
+If violence↔fall confusion stays high:
+- **More and better-mixed data** for the confused pair (biggest lever by far).
+- Raise `--seq-len` so the full trajectory (collapse → stillness) fits the window.
+- Check for mislabeled clips — one poisons the boundary more than ten help it.
+- Check the per-source table first; a domain gap masquerades as class confusion.
+
+Run `--margin` as an ablation if you want the ArcFace comparison, but note its
+logits are uncalibrated, so the per-class thresholds mean less on that path.
 
 ---
 
@@ -244,33 +379,38 @@ Edit `configs/default.yaml`:
 ```yaml
 detect:
   action_model: "models/action_gru.pt"   # <- your trained weights
-  action_min_conf: 0.5                    # raise to be stricter about triggering
+  action_min_conf: 0.60                   # fallback only; checkpoint thresholds win
 ```
 Restart HawkEye. On startup you'll see
-`Stage A action source: TRAINED model (...)` instead of `heuristics`. The
-classifier now drives violence/fall detection; everything downstream (Stage B
+`Stage A action source: TRAINED model (...)` instead of `heuristics`, and a log
+line listing the per-class thresholds and temperature loaded from the checkpoint.
+The classifier now drives violence/fall detection; everything downstream (Stage B
 reasoning, identity, dispatch) is unchanged.
 
-Share the `.pt` file with teammates directly (Drive/USB) — it's gitignored and
-does **not** go through the PR. Only the *code* changes are committed.
+The `.pt` file is gitignored on purpose — share it directly, commit only code.
 
-### 4.1 Re-tune the config thresholds from the run's metrics
+### 4.1 Re-tune the config from the run's metrics
 
-Don't leave the thresholds at their old values — set them from what this run
-actually produced (a deliberate manual step; the safety-critical thresholds
-deserve a human looking at the curves):
+Most thresholds are now **fitted during training and stored in the checkpoint**
+(`temperature`, per-class `thresholds` at `--target-precision`), so there is far
+less to hand-tune than before. `action_min_conf` is only a fallback for classes
+the checkpoint has no threshold for.
 
-1. **`action_min_conf`** — from the trainer's final per-class precision/recall and
-   a held-out check:
+What still deserves a human:
+
+1. **Verify before trusting.** The trained model must beat the baseline:
    ```bash
-   python eval/evaluate.py test-action --data data/datasets/actions --model models/action_gru.pt
-   python eval/evaluate.py compare     --data data/datasets/actions --model models/action_gru.pt
+   python eval/evaluate.py compare --data data/datasets/actions --model models/action_gru.pt
    ```
-   Pick the confidence that maximizes F1, but **favor recall on `violence`** — a
-   missed fight is worse than a false alarm. `compare` must show the trained model
-   beating the heuristic baseline; if it doesn't, something in the pipeline is
-   wrong, not just under-trained.
-2. **`weapon_conf` / `weapon_labels`** — see Section 5.
+   If it doesn't, something is wrong in the pipeline, not just under-trained.
+   To measure real generalisation, point `--data` at a dataset the model has
+   never seen rather than the training directory.
+2. **`--target-precision`** — retrain with a different value to move every class's
+   operating point at once. Higher = fewer false alarms, more misses.
+3. **`action_hysteresis_window` / `action_hysteresis_hits`** — raise `hits` if you
+   still see brief flickers on the live feed; lower it if genuine short events
+   (a single hard shove) are being missed.
+4. **`weapon_conf` / `weapon_labels`** — see Section 5.
 
 ---
 
@@ -278,7 +418,7 @@ deserve a human looking at the curves):
 
 Weapon detection is a separate YOLO object detector, disabled until you provide
 one. `scripts/train_weapon.py` fine-tunes YOLO11 and uses the same
-`device_profile.py` (CUDA → `batch=-1` auto-batch to ~60% VRAM + AMP; a safe
+`device_profile.py` (a safe
 fallback otherwise).
 
 **Automated (Kaggle):**
@@ -304,33 +444,41 @@ python scripts/train_weapon.py --data path/to/weapons.yaml --epochs 80 --imgsz 6
 detect:
   weapon_model: "models/weapons.pt"
   weapon_conf: 0.6          # moderately high — weapon false positives are costly
-  weapon_labels: ["gun", "pistol", "rifle", "shotgun", "firearm"]
+  weapon_labels: []         # empty = the built-in list (guns AND knives)
 ```
 `hawkeye/detect/weapons.py` filters detections to `weapon_labels` and raises a
-high-priority `WEAPON` anomaly that routes to `police`.
+high-priority `WEAPON` anomaly that routes to `police`. Matching is token-aware,
+so `handgun`, `machine_gun` and `pocket-knife` all match without a label like
+`begun` sneaking through.
 
-> **Set `weapon_labels` from the run's per-class mAP.** After training, the script
-> prints mAP50/mAP50-95 (and writes a PR curve under `runs/detect/…`). Only include
-> classes that clear a real bar (mAP50 > ~0.5). **Knife detection has historically
-> scored ~0% mAP50 — keep it excluded from `weapon_labels` until a run proves it
-> works.** Pick `weapon_conf` from the PR curve's knee.
+> **Set `weapon_labels` from your own run's per-class mAP.** After training, the
+> script prints mAP50/mAP50-95 (and writes PR curves under `runs/detect/…`). Only
+> narrow the list to exclude classes that genuinely failed to learn (mAP50 below
+> ~0.5). Do **not** carry over another run's exclusions: a previous model scored
+> ~0% mAP50 on knives, but that was a fact about that dataset and that run, not
+> about knives. Judge your model on your numbers. Pick `weapon_conf` from the PR
+> curve's knee.
 
 ---
 
 ## 6. Where each piece lives (quick map)
 
 ```
-hawkeye/detect/skeleton_features.py  features (train + infer share this) ← edit here
-hawkeye/detect/action_model.py       ActionNet + ArcMargin head
-hawkeye/detect/action_classifier.py  live inference wrapper (rolling window)
-hawkeye/detect/weapons.py            weapon YOLO wrapper
-hawkeye/train/device_profile.py      CUDA/CPU device + hyper-param profile (shared)
-scripts/train_action.py              action-classifier training
+hawkeye/detect/skeleton_features.py  features + standardize() — train, eval AND
+                                     infer all share this ← edit here, only here
+hawkeye/detect/action_model.py       ActionNet (multi-scale → BiGRU → pooling)
+hawkeye/detect/action_classifier.py  live inference wrapper (window, thresholds,
+                                     hysteresis, physical guards)
+hawkeye/detect/weapons.py            weapon YOLO wrapper + label matching
+hawkeye/train/device_profile.py      MPS/CPU device + hyper-param profile
+scripts/train_action.py              action training (grouped split, calibration)
 scripts/train_weapon.py              weapon-detector training (+ --auto-download)
-scripts/setup_datasets.py            dataset download/organize (--source kaggle|local)
+scripts/setup_datasets.py            dataset download/organize (kaggle|local)
 scripts/_kaggle_utils.py             shared Kaggle download helper
 scripts/train_all.sh                 one-command end-to-end pipeline
-eval/evaluate.py                     test-action / rwf2000 / compare
+eval/evaluate.py                     fps / test-action / rwf2000 / compare
+tests/test_action_pipeline.py        self-checks for the bugs in Section 1a
+tests/test_pipeline_shutdown.py      self-checks for shutdown ordering
 configs/default.yaml                 detect.action_model / detect.weapon_model
 ```
 

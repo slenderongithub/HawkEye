@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   },
   panelLabel: { ...typography.label, color: palette.textSecondary },
   telemetryTag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  telemetryTagText: { ...typography.micro, color: palette.textTertiary, letterSpacing: 0.4 },
+  telemetryTagText: { ...typography.micro, color: palette.textTertiary },
   telemetryList: {},
   telemetryRow: {
     flexDirection: 'row',
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
 
   // Sections
   section: { gap: spacing.xs },
-  sectionHint: { ...typography.micro, color: palette.textTertiary, letterSpacing: 0.4 },
+  sectionHint: { ...typography.micro, color: palette.textTertiary },
   list: { gap: spacing.md },
 
   // Patrol route rows

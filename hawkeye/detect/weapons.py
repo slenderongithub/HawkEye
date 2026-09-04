@@ -6,7 +6,9 @@ raises the anomaly to type WEAPON with high priority.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Sequence
 
 import numpy as np
@@ -40,7 +42,39 @@ class WeaponDetector:
         # config can't match every label.
         self.keywords = tuple(k.lower() for k in keywords if k and k.strip())
         self._model = None
-        self.enabled = bool(model_path)
+        # Require the file to actually exist, not just a non-empty path — a
+        # configured-but-missing checkpoint (e.g. deleted stale weights, or a
+        # config committed before the model was trained) must degrade to "no
+        # weapon detection" rather than crash the whole server on startup.
+        self.enabled = bool(model_path) and Path(model_path).is_file()
+        if model_path and not self.enabled:
+            log.warning("weapon_model %r is configured but the file does not "
+                       "exist — weapon detection disabled. Train one with "
+                       "scripts/train_weapon.py (see docs/training.md).", model_path)
+
+    # A compound like "handgun"/"shotgun"/"airgun" carries a real noun prefix;
+    # an inflected word that merely ends the same way ("begun") does not. Three
+    # characters separates the two cheaply and without a dictionary.
+    MIN_COMPOUND_PREFIX = 3
+
+    def _matches(self, label: str) -> bool:
+        """Token-aware keyword match against a model class name.
+
+        Plain substring matching fires on any label that merely contains a
+        keyword. Matching whole tokens — plus genuine compounds, since
+        "handgun"/"shotgun"/"machine_gun" are all guns — keeps the real naming
+        variants while rejecting incidental letter matches. Compound matching is
+        deliberately kept: in a security system a missed weapon costs far more
+        than one extra frame for Stage B to dismiss.
+        """
+        tokens = [t for t in re.split(r"[^a-z0-9]+", label.lower()) if t]
+        for t in tokens:
+            for k in self.keywords:
+                if t == k:
+                    return True
+                if t.endswith(k) and len(t) - len(k) >= self.MIN_COMPOUND_PREFIX:
+                    return True
+        return False
 
     def load(self):
         if not self.enabled:
@@ -51,7 +85,15 @@ class WeaponDetector:
 
         self.device = resolve_device(self.device)
         log.info("Loading weapon model %s on %s", self.model_path, self.device)
-        self._model = YOLO(self.model_path)
+        try:
+            self._model = YOLO(self.model_path)
+        except Exception as e:
+            # A corrupt/incompatible checkpoint is a bad file, not a reason to
+            # take down surveillance + attendance entirely. Same contract as
+            # ActionClassifier and the identity model: degrade, don't crash.
+            log.warning("Failed to load weapon model %s (%s) — weapon detection "
+                       "disabled for this run.", self.model_path, e)
+            self.enabled = False
         return self
 
     def detect(self, frame: np.ndarray) -> List[WeaponDetection]:
@@ -69,6 +111,6 @@ class WeaponDetector:
                                 r.boxes.cls.cpu().numpy(),
                                 r.boxes.conf.cpu().numpy()):
             label = str(names.get(int(cls), int(cls))).lower()
-            if any(k in label for k in self.keywords):
+            if self._matches(label):
                 out.append(WeaponDetection(box=box, conf=float(cf), label=label))
         return out

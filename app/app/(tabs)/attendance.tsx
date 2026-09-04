@@ -19,7 +19,6 @@ import {
   type ListRenderItem,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import {
@@ -28,8 +27,6 @@ import {
   radii,
   typography,
   motion,
-  gradients,
-  shadows,
 } from '@/theme';
 import { Screen } from '@/components/Screen';
 import { AppHeader } from '@/components/AppHeader';
@@ -243,15 +240,9 @@ function Hero({
     <Animated.View
       entering={FadeInDown.duration(motion.duration.base).springify().damping(18)}
     >
+      {/* No decorative gradient behind the count: the design language builds
+          emphasis from surface and type, never from a brand wash. */}
       <View style={styles.hero}>
-        {/* Accent glow behind the number (gradients.surfaceGlow). */}
-        <LinearGradient
-          colors={gradients.surfaceGlow}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
         <View style={styles.heroText}>
           {loading ? (
             <Skeleton width={72} height={52} radius={radii.md} />
@@ -396,7 +387,6 @@ const styles = StyleSheet.create({
     ...typography.micro,
     color: palette.accent,
     marginTop: 2,
-    letterSpacing: 0.3,
   },
 
   // Hero
@@ -405,13 +395,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: palette.surfaceElevated,
-    borderRadius: radii.xl,
+    borderRadius: radii.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.accentBorder,
     paddingVertical: spacing.xl,
     paddingHorizontal: spacing.xl,
     overflow: 'hidden',
-    ...shadows.card,
   },
   heroText: { flex: 1 },
   heroCount: {

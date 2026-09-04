@@ -340,7 +340,7 @@ def main():
     ap.add_argument("--batch", type=int, default=None,
                     help="batch size (default: auto-batch from the device profile)")
     ap.add_argument("--device", default="auto",
-                    help="Device: auto, cuda, cpu, 0, etc.")
+                    help="Device: auto (default), mps, cuda, cpu, 0, ...")
     ap.add_argument("--auto-download", dest="auto_download", action="store_true",
                     help="Download a weapon dataset from Kaggle before training "
                          "(overrides --data with the assembled weapons.yaml)")

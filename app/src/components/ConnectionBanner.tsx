@@ -44,7 +44,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  warn: { backgroundColor: palette.amberDim, borderColor: 'rgba(255,176,32,0.35)' },
-  err: { backgroundColor: palette.redDim, borderColor: 'rgba(255,77,94,0.35)' },
+  warn: { backgroundColor: palette.amberDim, borderColor: palette.amberBorder },
+  err: { backgroundColor: palette.redDim, borderColor: palette.redBorder },
   text: { ...typography.caption, fontWeight: '600' },
 });

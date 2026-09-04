@@ -29,8 +29,15 @@ class DetectConfig(BaseModel):
     # default list (see detect/weapons.py WEAPON_KEYWORDS).
     weapon_labels: List[str] = Field(default_factory=list)
     action_model: str = ""           # path to a trained action classifier (scripts/train_action.py)
-    action_min_conf: float = 0.5     # min softmax prob to raise an action candidate
+    # Fallback confidence floor. A trained checkpoint carries per-class
+    # thresholds fitted at a target precision, which take precedence over this.
+    action_min_conf: float = 0.5
     action_stride: int = 2           # run the action net every N frames (perf)
+    # Temporal hysteresis: a class must clear its threshold on `hits` of the last
+    # `window` inference ticks before it is emitted. One window crossing a
+    # threshold is noise; a sustained verdict is an event.
+    action_hysteresis_window: int = 3
+    action_hysteresis_hits: int = 2
     # Suppress a VIOLENCE verdict when 2+ people are close/overlapping but
     # neither scene motion nor an aggressive pose backs it up (e.g. two people
     # standing still near the camera) -- see hawkeye/detect/action_classifier.py.

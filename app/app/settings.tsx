@@ -346,7 +346,7 @@ const styles = StyleSheet.create({
   healthEmpty: { ...typography.body, color: palette.textTertiary },
 
   // About
-  wordmark: { ...typography.title, color: palette.text, letterSpacing: 0.3 },
+  wordmark: { ...typography.title, color: palette.text },
   wordmarkAccent: { color: palette.accent },
   version: {
     ...typography.caption,
