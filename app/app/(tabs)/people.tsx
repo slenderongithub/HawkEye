@@ -40,8 +40,32 @@ import { SectionHeader } from '@/components/SectionHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { usePeople, useEnrollPerson, useDeletePerson } from '@/api/queries';
+import { ApiError } from '@/api/client';
 import { toast } from '@/stores/toast';
 import type { Person } from '@/api/types';
+
+/**
+ * Server errors arrive as ApiError with a FastAPI body: `{"detail": "..."}`
+ * for our own HTTPExceptions, or `{"detail": [{"msg": ..., "loc": [...]}]}`
+ * for 422 request-validation failures.
+ */
+function errorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    try {
+      const detail = JSON.parse(e.body ?? '')?.detail;
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) {
+        return detail
+          .map((d) => `${(d.loc ?? []).slice(1).join('.')}: ${d.msg}`.replace(/^: /, ''))
+          .join('; ');
+      }
+    } catch {
+      // body wasn't JSON — fall through to the generic ApiError message
+    }
+    return e.message;
+  }
+  return 'Enrollment failed. Try again.';
+}
 
 // Clears the floating tab bar so the last row isn't hidden behind it.
 const TAB_BAR_SPACE = 108;
@@ -103,13 +127,14 @@ export default function PeopleScreen() {
           uri: a.uri,
           name: a.fileName ?? undefined,
           type: a.mimeType ?? 'image/jpeg',
+          file: a.file,
         })),
       });
       toast.show(`${trimmedName} enrolled`, 'success', 'checkmark-circle');
       resetForm();
       setExpanded(false);
-    } catch {
-      toast.show('Enrollment failed. Try again.', 'alert', 'warning');
+    } catch (e) {
+      toast.show(errorMessage(e), 'alert', 'warning');
     }
   };
 

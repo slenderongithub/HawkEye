@@ -56,14 +56,16 @@ class AttendanceStore:
 
     def on_date(self, d: Optional[str] = None) -> List[AttendanceRecord]:
         d = d or date_str()
-        rows = self._conn.execute(
-            "SELECT * FROM attendance WHERE date=? ORDER BY first_seen ASC", (d,)).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM attendance WHERE date=? ORDER BY first_seen ASC", (d,)).fetchall()
         return [AttendanceRecord(**dict(r)) for r in rows]
 
     def present_count(self, d: Optional[str] = None) -> int:
         d = d or date_str()
-        r = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM attendance WHERE date=?", (d,)).fetchone()
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM attendance WHERE date=?", (d,)).fetchone()
         return int(r["n"]) if r else 0
 
     def close(self) -> None:

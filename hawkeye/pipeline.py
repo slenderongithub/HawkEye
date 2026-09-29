@@ -53,14 +53,18 @@ class Pipeline:
 
         buflen = max(8, int(cfg.detect.clip_seconds * cfg.ingest.target_fps))
         self._ring: deque = deque(maxlen=buflen)
-        self._triggers: "queue.Queue" = queue.Queue(maxsize=4)
+        self._triggers: "queue.Queue" = queue.Queue(maxsize=16)
         self._latest_raw: Optional[np.ndarray] = None
+        self._latest_frame: Optional[np.ndarray] = None
+        self._frame_lock = threading.Lock()
         self._running = False
         self._stop_evt = threading.Event()
         self._capture_t: Optional[threading.Thread] = None
-        self._worker_t: Optional[threading.Thread] = None
+        self._worker_ts: List[threading.Thread] = []
         self._attendance_t: Optional[threading.Thread] = None
+        self._retention_t: Optional[threading.Thread] = None
         self._fps = 0.0
+        self._NUM_WORKERS = 2
 
     # --- lifecycle ---
     def start(self) -> None:
@@ -72,6 +76,9 @@ class Pipeline:
             # download/prepare can take minutes on first run, and the
             # dashboard/video feed should be usable immediately regardless.
             threading.Thread(target=self._load_identity, daemon=True).start()
+        # Same reasoning as identity: a lazy-loading reasoner (Moondream) can
+        # take minutes on first run, and that must not stall the first trigger.
+        threading.Thread(target=self.reasoner.preload, daemon=True).start()
         self._running = True
         self.hub.set_status(running=True, reasoner=self.reasoner.name,
                             identity=self.identity.available,
@@ -79,13 +86,18 @@ class Pipeline:
                             enrolled=self.identity.enrolled,
                             attendance=self.cfg.identity.attendance_enabled,
                             present_today=self.attendance.present_count())
-        self._worker_t = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_ts = [threading.Thread(target=self._worker_loop, daemon=True,
+                                            name=f"worker-{i}")
+                          for i in range(self._NUM_WORKERS)]
         self._capture_t = threading.Thread(target=self._capture_loop, daemon=True)
-        self._worker_t.start()
+        for t in self._worker_ts:
+            t.start()
         self._capture_t.start()
         if self.cfg.identity.attendance_enabled:
             self._attendance_t = threading.Thread(target=self._attendance_loop, daemon=True)
             self._attendance_t.start()
+        self._retention_t = threading.Thread(target=self._retention_loop, daemon=True)
+        self._retention_t.start()
         log.info("Pipeline started (reasoner=%s, identity=%s, attendance=%s)",
                  self.reasoner.name, self.identity.available,
                  self.cfg.identity.attendance_enabled)
@@ -107,7 +119,7 @@ class Pipeline:
             self._triggers.put_nowait(_SENTINEL)
         except queue.Full:
             pass
-        for t in (self._capture_t, self._worker_t, self._attendance_t):
+        for t in (self._capture_t, *self._worker_ts, self._attendance_t, self._retention_t):
             if t is not None and t.is_alive():
                 t.join(timeout=timeout)
                 if t.is_alive():
@@ -141,8 +153,6 @@ class Pipeline:
 
     # --- capture (real-time) ---
     def _capture_loop(self) -> None:
-        import cv2
-
         try:
             source = open_source(self.cfg.ingest.source,
                                  self.cfg.ingest.width, self.cfg.ingest.height)
@@ -151,43 +161,87 @@ class Pipeline:
             self._running = False
             return
 
-        interval = 1.0 / max(1, self.cfg.ingest.target_fps)
-        frame_id = 0
+        # The ingest thread always reads and drains the driver's internal
+        # buffer; this thread (Stage A) processes whatever is freshest. That
+        # way a slow inference pass drops old frames instead of queuing them,
+        # so detection is never running on a stale frame.
+        ingest_t = threading.Thread(target=self._ingest_loop, args=(source,), daemon=True)
+        ingest_t.start()
         try:
-            while self._running:
-                t0 = time.time()
-                frame = source.read()
-                if frame is None:
-                    log.info("End of stream / source read failed.")
-                    break
-                self._ring.append(frame.copy())
-                self._latest_raw = frame          # for the attendance worker
-
-                event, annotated, _ = self.stage_a.process(frame, frame_id, t0)
-                ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                if ok:
-                    self.hub.set_frame(buf.tobytes())
-
-                if event.triggered:
-                    self._enqueue_trigger(event, annotated)
-
-                frame_id += 1
-                dt = time.time() - t0
-                self._fps = 0.9 * self._fps + 0.1 * (1.0 / dt if dt > 0 else 0.0)
-                self.hub.set_status(fps=round(self._fps, 1))
-                if dt < interval:
-                    time.sleep(interval - dt)
+            self._process_loop()
         finally:
+            self._running = False
+            ingest_t.join(timeout=2.0)
             source.release()
             self.hub.set_status(running=False)
             log.info("Capture loop stopped.")
+
+    def _ingest_loop(self, source) -> None:
+        is_stream = source.spec.isdigit() or source.spec.startswith(
+            ("http://", "https://", "rtsp://", "rtmp://"))
+        backoff = 2.0
+        while self._running:
+            frame = source.read()
+            if frame is None:
+                if not is_stream:
+                    log.info("End of stream / source read failed.")
+                    self._running = False
+                    return
+                log.warning("Video source dropped; reconnecting in %.0fs...", backoff)
+                source.release()
+                if self._stop_evt.wait(backoff):
+                    return
+                try:
+                    source.open()
+                    log.info("Video source reconnected.")
+                    backoff = 2.0
+                except Exception as e:
+                    log.warning("Reconnect failed: %s", e)
+                    backoff = min(backoff * 2, 30.0)
+                continue
+            with self._frame_lock:
+                self._latest_frame = frame
+
+    def _process_loop(self) -> None:
+        import cv2
+
+        interval = 1.0 / max(1, self.cfg.ingest.target_fps)
+        frame_id = 0
+        last_frame = None
+        while self._running:
+            t0 = time.time()
+            with self._frame_lock:
+                frame = self._latest_frame
+            if frame is None or frame is last_frame:
+                time.sleep(0.005)
+                continue
+            last_frame = frame
+            self._ring.append(frame.copy())
+            self._latest_raw = frame.copy()   # for the attendance worker
+
+            event, annotated, _ = self.stage_a.process(frame, frame_id, t0)
+            ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ok:
+                self.hub.set_frame(buf.tobytes())
+
+            if event.triggered:
+                self._enqueue_trigger(event, annotated)
+
+            frame_id += 1
+            dt = time.time() - t0
+            self._fps = 0.9 * self._fps + 0.1 * (1.0 / dt if dt > 0 else 0.0)
+            self.hub.set_status(fps=round(self._fps, 1))
+            if dt < interval:
+                time.sleep(interval - dt)
 
     def _enqueue_trigger(self, event: StageAEvent, annotated: np.ndarray) -> None:
         snapshot = list(self._ring)
         try:
             self._triggers.put_nowait((event, snapshot, annotated.copy()))
         except queue.Full:
-            log.debug("Trigger dropped (worker busy).")
+            log.warning("Trigger dropped — all %d workers busy and the queue "
+                        "(size %d) is full. An incident may have been missed.",
+                        self._NUM_WORKERS, self._triggers.maxsize)
 
     # --- worker (heavy, triggered) ---
     def _worker_loop(self) -> None:
@@ -267,6 +321,25 @@ class Pipeline:
                         "ts": time.time(), "similarity": m.similarity,
                     })
             self.hub.set_status(present_today=self.attendance.present_count())
+
+    # --- retention (evidence/incidents don't accumulate forever) ---
+    def _retention_loop(self) -> None:
+        """Prune incidents (and their evidence files) older than
+        storage.retention_days. Runs once at startup, then daily — a 24/7
+        deployment would otherwise fill the disk within weeks."""
+        while True:
+            cutoff = time.time() - self.cfg.storage.retention_days * 86400
+            try:
+                ids = self.store.prune_older_than(cutoff)
+                for incident_id in ids:
+                    self.evidence.delete(incident_id)
+                if ids:
+                    log.info("Retention: pruned %d incident(s) older than %d days.",
+                             len(ids), self.cfg.storage.retention_days)
+            except Exception as e:
+                log.warning("Retention pass failed: %s", e)
+            if self._stop_evt.wait(86400):
+                return
 
     @staticmethod
     def _detect_gpu(device: str) -> bool:

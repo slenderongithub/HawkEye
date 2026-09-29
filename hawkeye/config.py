@@ -11,6 +11,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "default.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class IngestConfig(BaseModel):
@@ -78,6 +79,7 @@ class DecisionConfig(BaseModel):
 class StorageConfig(BaseModel):
     db_path: str = "data/hawkeye.db"
     evidence_dir: str = "data/evidence"
+    retention_days: int = 30       # incidents + evidence older than this get pruned
 
 
 class ServerConfig(BaseModel):
@@ -103,4 +105,11 @@ def load_config(path: str | Path | None = None) -> Config:
         raise FileNotFoundError(f"Config not found: {p}")
     with open(p, "r") as f:
         data = yaml.safe_load(f) or {}
-    return Config(**data)
+    cfg = Config(**data)
+    # Relative storage paths are anchored to the project root, not the CWD the
+    # process happened to be launched from.
+    if not Path(cfg.storage.db_path).is_absolute():
+        cfg.storage.db_path = str(PROJECT_ROOT / cfg.storage.db_path)
+    if not Path(cfg.storage.evidence_dir).is_absolute():
+        cfg.storage.evidence_dir = str(PROJECT_ROOT / cfg.storage.evidence_dir)
+    return cfg

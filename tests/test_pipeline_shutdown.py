@@ -58,8 +58,9 @@ def make_pipeline(log):
     p._stop_evt = threading.Event()
     p._triggers = queue.Queue(maxsize=4)
     p._capture_t = None
-    p._worker_t = None
+    p._worker_ts = []
     p._attendance_t = None
+    p._retention_t = None
     p.store = StubStore("incidents", log)
     p.attendance = StubStore("attendance", log)
     p.identity = type("I", (), {"store": StubStore("identity", log)})()
@@ -78,8 +79,8 @@ def test_join_happens_before_close():
         time.sleep(0.3)
         p.store.save(object())
 
-    p._worker_t = threading.Thread(target=worker, name="worker")
-    p._worker_t.start()
+    p._worker_ts = [threading.Thread(target=worker, name="worker")]
+    p._worker_ts[0].start()
     started.wait(2.0)
 
     p.stop(timeout=5.0)
@@ -87,7 +88,7 @@ def test_join_happens_before_close():
     assert "write:incidents" in log, "the in-flight incident write never happened"
     assert log.index("write:incidents") < log.index("close:incidents"), (
         f"stores closed before the worker finished writing — order was {log}")
-    assert not p._worker_t.is_alive(), "worker thread was not joined"
+    assert not p._worker_ts[0].is_alive(), "worker thread was not joined"
     print("  ✓ in-flight incident write completes before stores close")
 
 
@@ -113,8 +114,8 @@ def test_stop_signal_survives_a_full_queue():
                 break
         exited.set()
 
-    p._worker_t = threading.Thread(target=worker, name="worker")
-    p._worker_t.start()
+    p._worker_ts = [threading.Thread(target=worker, name="worker")]
+    p._worker_ts[0].start()
 
     t0 = time.time()
     p.stop(timeout=5.0)

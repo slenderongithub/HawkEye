@@ -69,3 +69,9 @@ class Reasoner:
 
     def reason(self, event: StageAEvent, frames: List[np.ndarray]) -> Reasoning:
         raise NotImplementedError
+
+    def preload(self) -> None:
+        """Optional: warm up any heavy model in the background. Backends that
+        load lazily on first use (e.g. Moondream) override this so the first
+        real trigger doesn't stall the worker thread."""
+        pass

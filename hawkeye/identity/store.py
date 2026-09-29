@@ -63,23 +63,25 @@ class EmbeddingStore:
                 v = np.asarray(emb, dtype=np.float32).tobytes()
                 self._conn.execute(
                     "INSERT INTO face_embeddings (person_id, vec) VALUES (?, ?)", (pid, v))
-        self._refresh()
+            self._refresh_locked()
         return person
 
     def delete_person(self, person_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM face_embeddings WHERE person_id=?", (person_id,))
             self._conn.execute("DELETE FROM people WHERE id=?", (person_id,))
-        self._refresh()
+            self._refresh_locked()
 
     # --- reads ---
     def list_people(self) -> List[Person]:
-        rows = self._conn.execute(
-            "SELECT * FROM people ORDER BY enrolled_at DESC").fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM people ORDER BY enrolled_at DESC").fetchall()
         return [self._row_to_person(r) for r in rows]
 
     def get_person(self, person_id: str) -> Optional[Person]:
-        r = self._conn.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
         return self._row_to_person(r) if r else None
 
     def match(self, embedding: np.ndarray) -> Tuple[Optional[str], float]:
@@ -107,15 +109,19 @@ class EmbeddingStore:
 
     # --- internals ---
     def _refresh(self) -> None:
+        with self._lock:
+            self._refresh_locked()
+
+    def _refresh_locked(self) -> None:
+        """Rebuild the in-memory matrix. Caller must hold self._lock."""
         rows = self._conn.execute(
             "SELECT person_id, vec FROM face_embeddings").fetchall()
         owners, vecs = [], []
         for r in rows:
             owners.append(r["person_id"])
             vecs.append(np.frombuffer(r["vec"], dtype=np.float32))
-        with self._lock:
-            self._owner_ids = owners
-            self._matrix = np.vstack(vecs).astype(np.float32) if vecs else None
+        self._owner_ids = owners
+        self._matrix = np.vstack(vecs).astype(np.float32) if vecs else None
 
     @staticmethod
     def _row_to_person(r: sqlite3.Row) -> Person:

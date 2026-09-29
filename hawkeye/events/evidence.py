@@ -5,6 +5,7 @@ Paths returned are relative to evidence_dir (the server serves them from there).
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -52,6 +53,9 @@ class EvidenceManager:
             out["face"] = rel
 
         return out
+
+    def delete(self, incident_id: str) -> None:
+        shutil.rmtree(self.root / incident_id, ignore_errors=True)
 
     @staticmethod
     def _sample(frames: List[np.ndarray], k: int) -> List[np.ndarray]:

@@ -73,7 +73,7 @@ class StageA:
 
         weapon_dets = self.weapons.detect(frame)
         if weapon_dets:
-            top = max(w.conf for w in weapon_dets)
+            top = max(wd.conf for wd in weapon_dets)
             candidates.append((AnomalyType.WEAPON, float(min(1.0, 0.7 + 0.3 * top)),
                                f"possible weapon detected ({weapon_dets[0].label})"))
 

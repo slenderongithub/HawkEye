@@ -12,7 +12,8 @@ from typing import List
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.websockets import WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
@@ -59,6 +60,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="HawkEye", lifespan=lifespan)
+
+# Dev workflow (`cd app && npm start`) and a phone on the LAN both hit this API
+# from a different origin than the served app; there's no auth/cookies to
+# protect here (Phase 1, trusted LAN — see README roadmap), so open CORS is
+# just unblocking a documented workflow, not a new exposure.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
@@ -114,6 +126,45 @@ async def incidents(limit: int = 50):
         d["headline"] = inc.headline()
         out.append(d)
     return out
+
+
+@app.post("/api/incidents/{incident_id}/status")
+async def set_incident_status(incident_id: str, status: str = Form(...)):
+    from hawkeye.events.schema import IncidentStatus
+
+    try:
+        IncidentStatus(status)
+    except ValueError:
+        raise HTTPException(400, f"Invalid status '{status}'. "
+                                 f"Must be one of: {[s.value for s in IncidentStatus]}")
+    ok = app.state.pipeline.store.set_status(incident_id, status)
+    if not ok:
+        raise HTTPException(404, "Incident not found")
+    return {"ok": True}
+
+
+@app.get("/api/incidents.csv")
+async def incidents_csv(limit: int = 1000):
+    import csv
+    import io
+
+    items = app.state.pipeline.store.recent(limit)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["id", "ts", "anomaly_type", "status", "severity", "description",
+                     "matched_person", "action", "dispatched"])
+    for inc in items:
+        writer.writerow([
+            inc.id, inc.ts, inc.anomaly_type.value, inc.status.value,
+            inc.reasoning.severity.value if inc.reasoning else "",
+            inc.reasoning.description if inc.reasoning else "",
+            inc.face_match.name if inc.face_match and inc.face_match.matched else "",
+            inc.action.action.value if inc.action else "",
+            inc.action.dispatched if inc.action else False,
+        ])
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="text/csv", headers={
+        "Content-Disposition": "attachment; filename=hawkeye_incidents.csv"})
 
 
 @app.get("/api/attendance")
@@ -203,8 +254,10 @@ async def ws(websocket: WebSocket):
     # Replay recent incidents on connect so a fresh page isn't empty.
     version, _ = hub.incidents_since(0)
     att_version, _ = hub.attendance_since(0)   # only toast NEW marks (no replay flood)
+    status_version, status = hub.status_since(-1)   # -1: always send the initial status
     for inc in hub.recent_incidents(20)[::-1]:
         await websocket.send_text(json.dumps({"type": "incident", "data": inc}))
+    await websocket.send_text(json.dumps({"type": "status", "data": status}))
     try:
         while True:
             fid, jpeg = hub.get_frame()
@@ -217,7 +270,9 @@ async def ws(websocket: WebSocket):
             att_version, att_new = hub.attendance_since(att_version)
             for rec in att_new:
                 await websocket.send_text(json.dumps({"type": "attendance", "data": rec}))
-            await websocket.send_text(json.dumps({"type": "status", "data": hub.get_status()}))
+            status_version, status = hub.status_since(status_version)
+            if status is not None:
+                await websocket.send_text(json.dumps({"type": "status", "data": status}))
             await asyncio.sleep(1 / 15)
     except (WebSocketDisconnect, RuntimeError):
         return

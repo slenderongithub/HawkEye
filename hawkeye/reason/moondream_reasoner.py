@@ -7,6 +7,7 @@ keyword-map the caption to a verdict. Enabled only if transformers is installed.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import List
 
 import numpy as np
@@ -40,6 +41,7 @@ class MoondreamReasoner(Reasoner):
         self.max_frames = max_frames
         self._model = None
         self._tokenizer = None
+        self._load_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -49,15 +51,25 @@ class MoondreamReasoner(Reasoner):
         except Exception:
             return False
 
+    def preload(self) -> None:
+        try:
+            self._load()
+        except Exception as e:
+            log.warning("Moondream preload failed (%s); will retry on first trigger", e)
+
     def _load(self):
         if self._model is not None:
             return
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        with self._load_lock:
+            if self._model is not None:      # another thread won the race
+                return
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        log.info("Loading Moondream2 (%s) — first run downloads weights", self.model_name)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self.model_name, trust_remote_code=True)
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            log.info("Loading Moondream2 (%s) — first run downloads weights", self.model_name)
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_name, trust_remote_code=True)
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = model
 
     def _caption(self, frame: np.ndarray) -> str:
         from PIL import Image

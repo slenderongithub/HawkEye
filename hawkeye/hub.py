@@ -20,6 +20,7 @@ class StreamHub:
         self._incident_version: int = 0
         self._attendance: Deque[dict] = deque(maxlen=max_incidents)
         self._attendance_version: int = 0
+        self._status_version: int = 0
         # lightweight runtime status for the dashboard header
         self.status: Dict[str, object] = {
             "running": False,
@@ -34,7 +35,9 @@ class StreamHub:
     def set_frame(self, jpeg: bytes) -> None:
         with self._lock:
             self._latest_jpeg = jpeg
-            self._frame_id += 1
+            # Wraps well inside JS's Number.MAX_SAFE_INTEGER; only used as a
+            # change marker on the client, so wrapping is harmless.
+            self._frame_id = (self._frame_id + 1) % (2 ** 31)
 
     def push_incident(self, incident: dict) -> None:
         with self._lock:
@@ -49,6 +52,7 @@ class StreamHub:
     def set_status(self, **kwargs) -> None:
         with self._lock:
             self.status.update(kwargs)
+            self._status_version += 1
 
     # --- consumer side (async server) ---
     def get_frame(self) -> Tuple[int, Optional[bytes]]:
@@ -81,3 +85,12 @@ class StreamHub:
     def get_status(self) -> Dict[str, object]:
         with self._lock:
             return dict(self.status)
+
+    def status_since(self, version: int) -> Tuple[int, Optional[Dict[str, object]]]:
+        """Return (current_version, status) if it changed since `version`, else
+        (current_version, None) — lets the WebSocket loop skip sending a frame
+        that hasn't changed."""
+        with self._lock:
+            if version >= self._status_version:
+                return self._status_version, None
+            return self._status_version, dict(self.status)

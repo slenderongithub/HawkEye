@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import List, Optional
 
-from .schema import Incident
+from .schema import Incident, IncidentStatus
 
 
 class IncidentStore:
@@ -42,14 +42,40 @@ class IncidentStore:
             )
 
     def recent(self, limit: int = 50) -> List[Incident]:
-        rows = self._conn.execute(
-            "SELECT data FROM incidents ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM incidents ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
         return [Incident.model_validate_json(r["data"]) for r in rows]
 
     def get(self, incident_id: str) -> Optional[Incident]:
-        r = self._conn.execute(
-            "SELECT data FROM incidents WHERE id=?", (incident_id,)).fetchone()
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT data FROM incidents WHERE id=?", (incident_id,)).fetchone()
         return Incident.model_validate_json(r["data"]) if r else None
+
+    def set_status(self, incident_id: str, status: str) -> bool:
+        """Update an incident's status (e.g. dismiss a false positive)."""
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM incidents WHERE id=?", (incident_id,)).fetchone()
+            if row is None:
+                return False
+            incident = Incident.model_validate_json(row["data"])
+            incident.status = IncidentStatus(status)
+            self._conn.execute(
+                "UPDATE incidents SET data=? WHERE id=?",
+                (incident.model_dump_json(), incident_id))
+        return True
+
+    def prune_older_than(self, cutoff_ts: float) -> List[str]:
+        """Delete incidents older than cutoff_ts. Returns their ids so evidence
+        files can be cleaned up too."""
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT id FROM incidents WHERE ts < ?", (cutoff_ts,)).fetchall()
+            ids = [r["id"] for r in rows]
+            self._conn.execute("DELETE FROM incidents WHERE ts < ?", (cutoff_ts,))
+        return ids
 
     def close(self) -> None:
         """Release the SQLite connection (call on pipeline shutdown)."""

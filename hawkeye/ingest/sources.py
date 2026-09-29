@@ -31,9 +31,16 @@ class VideoSource:
         if self.height:
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         if not self._cap.isOpened():
+            hint = ""
+            if self.spec.isdigit():
+                import platform
+                if platform.system() == "Darwin":
+                    hint = (" On macOS, the terminal/app running this needs camera "
+                            "access: System Settings -> Privacy & Security -> Camera "
+                            "-> enable it for your terminal app, then restart the terminal.")
             raise RuntimeError(
                 f"Could not open video source '{self.spec}'. "
-                "Check the camera index / URL / file path (and camera permissions on macOS)."
+                f"Check the camera index / URL / file path.{hint}"
             )
         log.info("Opened video source: %s", self.spec)
         return self

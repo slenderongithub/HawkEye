@@ -94,18 +94,26 @@ export function useEnrollPerson() {
     mutationFn: async (input: {
       name: string;
       meta?: Record<string, string>;
-      images: { uri: string; name?: string; type?: string }[];
+      images: { uri: string; name?: string; type?: string; file?: File }[];
     }) => {
       const form = new FormData();
       form.append('name', input.name);
       form.append('meta', JSON.stringify(input.meta ?? {}));
       input.images.forEach((img, i) => {
-        // RN FormData file shape; on web, callers pass a Blob-backed uri.
-        form.append('files', {
-          uri: img.uri,
-          name: img.name ?? `enroll_${i}.jpg`,
-          type: img.type ?? 'image/jpeg',
-        } as unknown as Blob);
+        // On web, ImagePicker gives a real Blob-backed File — a plain
+        // {uri, name, type} object stringifies to "[object Object]" instead
+        // of sending file data, so use it whenever present. Native (RN) has
+        // no File, so it falls back to the {uri, name, type} shape.
+        form.append(
+          'files',
+          img.file ??
+            ({
+              uri: img.uri,
+              name: img.name ?? `enroll_${i}.jpg`,
+              type: img.type ?? 'image/jpeg',
+            } as unknown as Blob),
+          img.name ?? `enroll_${i}.jpg`,
+        );
       });
       return api.postForm('/api/people', form, Person);
     },
