@@ -38,3 +38,5 @@ runs/
 
 # --- Notebooks ---
 .ipynb_checkpoints/
+.niti/
+.claude/
